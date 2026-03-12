@@ -8,7 +8,7 @@ Each plugin is an independent Go module. Install only what you need.
 
 | Plugin | Description | Version |
 |--------|-------------|---------|
-| [`n8n`](./n8n) | Workflow automation & cronjobs via n8n | `v1.0.0` |
+| [`n8n`](./n8n) | Workflow automation & cronjobs via n8n | `v0.1.0` |
 
 ## Installation
 
