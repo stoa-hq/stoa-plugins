@@ -64,6 +64,7 @@ func (d *dispatcher) Send(ctx context.Context, event *sdk.HookEvent) error {
 
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-Stoa-Signature", "sha256="+sign(body, d.cfg.Secret))
+	req.Header.Set("X-Stoa-Token", d.cfg.Secret)
 
 	resp, err := d.client.Do(req)
 	if err != nil {

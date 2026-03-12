@@ -31,7 +31,7 @@ import (
 
 const (
 	pluginName    = "n8n"
-	pluginVersion = "1.0.0"
+	pluginVersion = "0.1.2"
 )
 
 // Plugin forwards Stoa domain events to n8n via HTTP webhooks.
@@ -45,8 +45,12 @@ func New() *Plugin {
 	return &Plugin{}
 }
 
-func (p *Plugin) Name() string        { return pluginName }
-func (p *Plugin) Version() string     { return pluginVersion }
+func init() {
+	sdk.Register(New())
+}
+
+func (p *Plugin) Name() string    { return pluginName }
+func (p *Plugin) Version() string { return pluginVersion }
 func (p *Plugin) Description() string {
 	return "Forwards Stoa domain events to n8n for workflow automation and scheduled jobs"
 }

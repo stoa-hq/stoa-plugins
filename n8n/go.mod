@@ -4,7 +4,7 @@ go 1.25.5
 
 require (
 	github.com/rs/zerolog v1.34.0
-	github.com/stoa-hq/stoa v0.0.0
+	github.com/stoa-hq/stoa v0.1.4
 )
 
 require github.com/go-chi/chi/v5 v5.2.5
@@ -21,5 +21,3 @@ require (
 	golang.org/x/sys v0.41.0 // indirect
 	golang.org/x/text v0.34.0 // indirect
 )
-
-replace github.com/stoa-hq/stoa => ../../stoa
