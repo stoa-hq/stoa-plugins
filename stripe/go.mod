@@ -8,7 +8,7 @@ require (
 	github.com/jackc/pgx/v5 v5.8.0
 	github.com/mark3labs/mcp-go v0.44.1
 	github.com/rs/zerolog v1.34.0
-	github.com/stoa-hq/stoa v0.1.4
+	github.com/stoa-hq/stoa v0.2.0
 	github.com/stripe/stripe-go/v82 v82.0.0
 )
 
@@ -31,3 +31,5 @@ require (
 	golang.org/x/text v0.34.0 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
+
+replace github.com/stoa-hq/stoa => ../../stoa

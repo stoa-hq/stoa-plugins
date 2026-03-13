@@ -1,6 +1,7 @@
 package stripe
 
 import (
+	"context"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -14,7 +15,11 @@ import (
 	stripewebhook "github.com/stripe/stripe-go/v82/webhook"
 )
 
-const maxWebhookBodyBytes = 65536
+const (
+	maxWebhookBodyBytes        = 65536
+	maxPaymentIntentBodyBytes  = 4096
+	webhookProcessingTimeout   = 30 * time.Second
+)
 
 // mountRoutes registers all HTTP routes for the Stripe plugin.
 func mountRoutes(
@@ -22,18 +27,22 @@ func mountRoutes(
 	sc *stripeClient,
 	db *pgxpool.Pool,
 	hooks *sdk.HookRegistry,
+	authHelper *sdk.AuthHelper,
 	webhookSecret string,
 	logger zerolog.Logger,
 ) {
-	// Store-facing route: agents / frontend use this to create a PaymentIntent.
-	router.Post("/api/v1/store/stripe/payment-intent",
-		paymentIntentHandler(sc, db, logger))
+	// Store-facing route: requires authentication + order ownership check.
+	router.Route("/api/v1/store/stripe", func(r chi.Router) {
+		r.Use(authHelper.Required)
+		r.Post("/payment-intent",
+			paymentIntentHandler(sc, db, authHelper, logger))
+	})
 
-	// Stripe webhook receiver.
+	// Stripe webhook receiver — no auth; verified by Stripe signature.
 	router.Post("/plugins/stripe/webhook",
 		webhookHandler(db, hooks, webhookSecret, logger))
 
-	// Admin health check.
+	// Health check.
 	router.Get("/plugins/stripe/health",
 		healthHandler(sc, logger))
 }
@@ -45,11 +54,17 @@ type paymentIntentRequest struct {
 }
 
 // paymentIntentHandler creates a Stripe PaymentIntent for an existing (pending) order.
-// It looks up the order total and currency from the database, then calls Stripe.
-func paymentIntentHandler(sc *stripeClient, db *pgxpool.Pool, logger zerolog.Logger) http.HandlerFunc {
+// It verifies that the authenticated user owns the order before proceeding.
+func paymentIntentHandler(sc *stripeClient, db *pgxpool.Pool, authHelper *sdk.AuthHelper, logger zerolog.Logger) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		userID := authHelper.UserID(r.Context())
+		if userID == uuid.Nil {
+			writeError(w, http.StatusUnauthorized, "authentication required")
+			return
+		}
+
 		var req paymentIntentRequest
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		if err := json.NewDecoder(io.LimitReader(r.Body, maxPaymentIntentBodyBytes)).Decode(&req); err != nil {
 			writeError(w, http.StatusBadRequest, "invalid request body")
 			return
 		}
@@ -71,7 +86,8 @@ func paymentIntentHandler(sc *stripeClient, db *pgxpool.Pool, logger zerolog.Log
 			status   string
 		)
 		row := db.QueryRow(r.Context(),
-			`SELECT total, currency, status FROM orders WHERE id = $1`, orderID)
+			`SELECT total, currency, status FROM orders WHERE id = $1 AND customer_id = $2`,
+			orderID, userID)
 		if err := row.Scan(&total, &currency, &status); err != nil {
 			logger.Error().Err(err).Str("order_id", orderID.String()).Msg("stripe: fetch order")
 			writeError(w, http.StatusNotFound, "order not found")
@@ -80,6 +96,10 @@ func paymentIntentHandler(sc *stripeClient, db *pgxpool.Pool, logger zerolog.Log
 		if status != "pending" {
 			writeError(w, http.StatusUnprocessableEntity,
 				"payment intent can only be created for pending orders")
+			return
+		}
+		if total <= 0 {
+			writeError(w, http.StatusUnprocessableEntity, "order total must be positive")
 			return
 		}
 
@@ -118,29 +138,40 @@ func webhookHandler(
 			return
 		}
 
-		ctx := r.Context()
+		// Use a detached context with timeout for async processing.
+		// r.Context() is canceled when the handler returns, which would
+		// cause DB operations in the goroutine to fail.
+		bgCtx, cancel := context.WithTimeout(context.Background(), webhookProcessingTimeout)
 
 		switch event.Type {
 		case "payment_intent.succeeded":
 			pi, err := unmarshalPaymentIntent(event.Data.Raw)
 			if err != nil {
+				cancel()
 				logger.Error().Err(err).Msg("stripe webhook: unmarshal payment intent")
 				writeError(w, http.StatusBadRequest, "invalid event data")
 				return
 			}
-			go handlePaymentIntentSucceeded(ctx, pi, db, hooks, logger)
+			go func() {
+				defer cancel()
+				handlePaymentIntentSucceeded(bgCtx, pi, db, hooks, logger)
+			}()
 
 		case "payment_intent.payment_failed":
 			pi, err := unmarshalPaymentIntent(event.Data.Raw)
 			if err != nil {
+				cancel()
 				logger.Error().Err(err).Msg("stripe webhook: unmarshal payment intent")
 				writeError(w, http.StatusBadRequest, "invalid event data")
 				return
 			}
-			go handlePaymentIntentFailed(ctx, pi, db, hooks, logger)
+			go func() {
+				defer cancel()
+				handlePaymentIntentFailed(bgCtx, pi, db, hooks, logger)
+			}()
 
 		default:
-			// Acknowledged but not handled.
+			cancel()
 			logger.Debug().Str("event_type", string(event.Type)).Msg("stripe webhook: unhandled event")
 		}
 

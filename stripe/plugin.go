@@ -65,7 +65,7 @@ func (p *Plugin) Init(app *sdk.AppContext) error {
 
 	p.sc = newStripeClient(cfg)
 
-	mountRoutes(app.Router, p.sc, app.DB, app.Hooks, cfg.WebhookSecret, p.logger)
+	mountRoutes(app.Router, p.sc, app.DB, app.Hooks, app.Auth, cfg.WebhookSecret, p.logger)
 
 	p.logger.Info().
 		Str("currency", cfg.Currency).

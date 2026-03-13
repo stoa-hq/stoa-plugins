@@ -30,11 +30,17 @@ func handlePaymentIntentSucceeded(
 		return
 	}
 
-	txID, err := createTransaction(ctx, db, orderID, paymentMethodID, "completed", pi)
+	txID, duplicate, err := createTransaction(ctx, db, orderID, paymentMethodID, "completed", pi)
 	if err != nil {
 		logger.Error().Err(err).
 			Str("order_id", orderID.String()).
 			Msg("stripe webhook: failed to create payment transaction")
+		return
+	}
+	if duplicate {
+		logger.Info().
+			Str("payment_intent_id", pi.ID).
+			Msg("stripe webhook: duplicate event, skipping")
 		return
 	}
 
@@ -79,11 +85,17 @@ func handlePaymentIntentFailed(
 		return
 	}
 
-	txID, err := createTransaction(ctx, db, orderID, paymentMethodID, "failed", pi)
+	txID, duplicate, err := createTransaction(ctx, db, orderID, paymentMethodID, "failed", pi)
 	if err != nil {
 		logger.Error().Err(err).
 			Str("order_id", orderID.String()).
 			Msg("stripe webhook: failed to create payment transaction")
+		return
+	}
+	if duplicate {
+		logger.Info().
+			Str("payment_intent_id", pi.ID).
+			Msg("stripe webhook: duplicate event, skipping")
 		return
 	}
 
@@ -128,6 +140,8 @@ func extractMetadata(pi *stripe.PaymentIntent) (orderID uuid.UUID, paymentMethod
 }
 
 // createTransaction inserts a payment_transaction row and returns its ID.
+// It uses ON CONFLICT on provider_reference to ensure idempotency — duplicate
+// Stripe webhook deliveries will not create duplicate records.
 func createTransaction(
 	ctx context.Context,
 	db *pgxpool.Pool,
@@ -135,12 +149,15 @@ func createTransaction(
 	paymentMethodID uuid.UUID,
 	status string,
 	pi *stripe.PaymentIntent,
-) (uuid.UUID, error) {
+) (txID uuid.UUID, duplicate bool, err error) {
 	id := uuid.New()
-	_, err := db.Exec(ctx, `
+	var returnedID uuid.UUID
+	err = db.QueryRow(ctx, `
 		INSERT INTO payment_transactions
 			(id, order_id, payment_method_id, status, amount, currency, provider_reference, created_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+		ON CONFLICT (provider_reference) DO NOTHING
+		RETURNING id`,
 		id,
 		orderID,
 		paymentMethodID,
@@ -149,11 +166,15 @@ func createTransaction(
 		strings.ToUpper(string(pi.Currency)),
 		pi.ID,
 		time.Now().UTC(),
-	)
+	).Scan(&returnedID)
 	if err != nil {
-		return uuid.Nil, fmt.Errorf("insert payment_transaction: %w", err)
+		// pgx returns no rows error when ON CONFLICT DO NOTHING fires
+		if err.Error() == "no rows in result set" {
+			return uuid.Nil, true, nil
+		}
+		return uuid.Nil, false, fmt.Errorf("insert payment_transaction: %w", err)
 	}
-	return id, nil
+	return returnedID, false, nil
 }
 
 // updateOrderStatus transitions an order to toStatus and records the change

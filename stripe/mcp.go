@@ -10,10 +10,16 @@ import (
 	"github.com/stoa-hq/stoa/pkg/sdk"
 )
 
+// toolAdder is the interface satisfied by both *server.MCPServer and
+// *mcp.ScopedMCPServer (which enforces tool name prefixes).
+type toolAdder interface {
+	AddTool(mcp.Tool, server.ToolHandlerFunc)
+}
+
 // RegisterStoreMCPTools implements sdk.MCPStorePlugin.
 // It adds the store_stripe_create_payment_intent tool to the Store MCP server.
 func (p *Plugin) RegisterStoreMCPTools(srv any, client sdk.StoreAPIClient) {
-	s := srv.(*server.MCPServer)
+	s := srv.(toolAdder)
 	t, h := stripeCreatePaymentIntentTool(client)
 	s.AddTool(t, h)
 }
@@ -41,7 +47,9 @@ func stripeCreatePaymentIntentTool(client sdk.StoreAPIClient) (mcp.Tool, server.
 		}
 		data, err := client.Post("/api/v1/store/stripe/payment-intent", body)
 		if err != nil {
-			return mcp.NewToolResultError(err.Error()), nil
+			// Return a sanitized error to MCP consumers — do not leak
+			// internal URLs, connection details, or Stripe error specifics.
+			return mcp.NewToolResultError("failed to create payment intent"), nil
 		}
 		return formatMCPResult(data), nil
 	}
