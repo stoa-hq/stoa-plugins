@@ -4,7 +4,7 @@ go 1.25.5
 
 require (
 	github.com/rs/zerolog v1.34.0
-	github.com/stoa-hq/stoa v0.2.1
+	github.com/stoa-hq/stoa v0.2.2
 )
 
 require (

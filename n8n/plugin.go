@@ -31,7 +31,7 @@ import (
 
 const (
 	pluginName    = "n8n"
-	pluginVersion = "0.1.2"
+	pluginVersion = "0.1.3"
 )
 
 // Plugin forwards Stoa domain events to n8n via HTTP webhooks.

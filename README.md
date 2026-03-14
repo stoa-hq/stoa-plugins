@@ -9,6 +9,7 @@ Each plugin is an independent Go module. Install only what you need.
 | Plugin | Description | Version |
 |--------|-------------|---------|
 | [`n8n`](./n8n) | Workflow automation & cronjobs via n8n | `v0.1.2` |
+| [`stripe`](./stripe)| stripe payment method | `v0.1.1` |
 
 ## Installation
 
