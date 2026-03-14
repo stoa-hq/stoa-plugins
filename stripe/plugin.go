@@ -30,13 +30,15 @@
 package stripe
 
 import (
+	"net/http"
+
 	"github.com/rs/zerolog"
 	"github.com/stoa-hq/stoa/pkg/sdk"
 )
 
 const (
 	pluginName    = "stripe"
-	pluginVersion = "0.1.0"
+	pluginVersion = "0.1.1"
 )
 
 // Plugin integrates Stripe as a payment provider for Stoa.
@@ -54,7 +56,8 @@ func (p *Plugin) Name() string        { return pluginName }
 func (p *Plugin) Version() string     { return pluginVersion }
 func (p *Plugin) Description() string { return "Stripe payment provider for Stoa" }
 
-// Init reads config, creates the Stripe client, and mounts HTTP routes.
+// Init reads config, creates the Stripe client, mounts HTTP routes, and
+// serves embedded frontend assets via the AssetRouter.
 func (p *Plugin) Init(app *sdk.AppContext) error {
 	p.logger = app.Logger.With().Str("plugin", pluginName).Logger()
 
@@ -67,11 +70,34 @@ func (p *Plugin) Init(app *sdk.AppContext) error {
 
 	mountRoutes(app.Router, p.sc, app.DB, app.Hooks, app.Auth, cfg.WebhookSecret, p.logger)
 
+	// Serve embedded frontend assets at /plugins/stripe/assets/*
+	if app.AssetRouter != nil {
+		app.AssetRouter.Handle("/*", http.FileServer(assetsSubFS()))
+	}
+
 	p.logger.Info().
 		Str("currency", cfg.Currency).
 		Msg("stripe plugin initialised")
 
 	return nil
+}
+
+// UIExtensions returns the UI extensions provided by the Stripe plugin.
+// It declares a Web Component for the storefront checkout payment slot.
+func (p *Plugin) UIExtensions() []sdk.UIExtension {
+	return []sdk.UIExtension{
+		{
+			ID:   "stripe_checkout",
+			Slot: "storefront:checkout:payment",
+			Type: "component",
+			Component: &sdk.UIComponent{
+				TagName:         "stoa-stripe-checkout",
+				ScriptURL:       "/plugins/stripe/assets/checkout.js",
+				Integrity:       sriHash("frontend/dist/checkout.js"),
+				ExternalScripts: []string{"https://js.stripe.com/v3/"},
+			},
+		},
+	}
 }
 
 // Shutdown is a no-op; the Stripe client has no persistent connections.
