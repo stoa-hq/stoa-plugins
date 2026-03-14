@@ -55,7 +55,7 @@ go work use ./n8n
 2. Create a subdirectory with its own `go.mod` (`module github.com/stoa-hq/stoa-plugins/<name>`)
 3. Implement `sdk.Plugin` from `github.com/stoa-hq/stoa/pkg/sdk`
 4. Add tests — every implementation requires test coverage
-5. Document the plugin in [stoa-docs](https://github.com/stoa-hq/stoa-docs) under `docs/plugins/`
+5. Document the plugin in [stoa-docs](https://github.com/stoa-hq/docs) under `docs/plugins/`
 
 ## License
 

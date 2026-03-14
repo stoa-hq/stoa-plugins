@@ -31,7 +31,7 @@ import (
 
 const (
 	pluginName    = "n8n"
-	pluginVersion = "0.2.1"
+	pluginVersion = "0.2.2"
 )
 
 // validAfterHooks is the set of all after-hooks the plugin can forward.
