@@ -132,3 +132,88 @@ func TestPlugin_Shutdown(t *testing.T) {
 		t.Errorf("Shutdown() unexpected error = %v", err)
 	}
 }
+
+func testAppContextWithHooks(t *testing.T, webhookBaseURL string, hooks []interface{}) *sdk.AppContext {
+	t.Helper()
+	n8nCfg := map[string]interface{}{
+		"webhook_base_url": webhookBaseURL,
+		"secret":           "test-secret",
+		"timeout_seconds":  float64(5),
+	}
+	if hooks != nil {
+		n8nCfg["hooks"] = hooks
+	}
+	return &sdk.AppContext{
+		Router: chi.NewRouter(),
+		Hooks:  sdk.NewHookRegistry(),
+		Logger: zerolog.Nop(),
+		Auth:   noopAuth(),
+		Config: map[string]interface{}{"n8n": n8nCfg},
+	}
+}
+
+func TestPlugin_Init_HooksSubset(t *testing.T) {
+	var callCount atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		callCount.Add(1)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	p := New()
+	app := testAppContextWithHooks(t, srv.URL, []interface{}{
+		"order.after_create",
+	})
+
+	if err := p.Init(app); err != nil {
+		t.Fatalf("Init() error = %v", err)
+	}
+
+	// Dispatch a configured hook — should trigger.
+	event := &sdk.HookEvent{Name: sdk.HookAfterOrderCreate, Entity: map[string]string{"id": "1"}}
+	if err := app.Hooks.Dispatch(context.Background(), event); err != nil {
+		t.Fatalf("Dispatch() error = %v", err)
+	}
+	time.Sleep(50 * time.Millisecond)
+
+	if callCount.Load() != 1 {
+		t.Errorf("expected 1 webhook call for configured hook, got %d", callCount.Load())
+	}
+
+	// Dispatch a non-configured hook — should NOT trigger.
+	callCount.Store(0)
+	event2 := &sdk.HookEvent{Name: sdk.HookAfterProductCreate, Entity: map[string]string{"id": "2"}}
+	_ = app.Hooks.Dispatch(context.Background(), event2)
+	time.Sleep(50 * time.Millisecond)
+
+	if callCount.Load() != 0 {
+		t.Errorf("expected 0 webhook calls for non-configured hook, got %d", callCount.Load())
+	}
+}
+
+func TestPlugin_Init_HooksDefault(t *testing.T) {
+	var callCount atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		callCount.Add(1)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	p := New()
+	app := testAppContextWithHooks(t, srv.URL, nil) // no hooks filter
+
+	if err := p.Init(app); err != nil {
+		t.Fatalf("Init() error = %v", err)
+	}
+
+	// Both order and product hooks should fire when no filter is set.
+	event1 := &sdk.HookEvent{Name: sdk.HookAfterOrderCreate, Entity: map[string]string{"id": "1"}}
+	event2 := &sdk.HookEvent{Name: sdk.HookAfterProductCreate, Entity: map[string]string{"id": "2"}}
+	_ = app.Hooks.Dispatch(context.Background(), event1)
+	_ = app.Hooks.Dispatch(context.Background(), event2)
+	time.Sleep(50 * time.Millisecond)
+
+	if callCount.Load() != 2 {
+		t.Errorf("expected 2 webhook calls with default hooks, got %d", callCount.Load())
+	}
+}

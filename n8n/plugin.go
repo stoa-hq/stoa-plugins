@@ -31,8 +31,28 @@ import (
 
 const (
 	pluginName    = "n8n"
-	pluginVersion = "0.1.4"
+	pluginVersion = "0.2.1"
 )
+
+// validAfterHooks is the set of all after-hooks the plugin can forward.
+var validAfterHooks = map[string]bool{
+	sdk.HookAfterProductCreate:  true,
+	sdk.HookAfterProductUpdate:  true,
+	sdk.HookAfterProductDelete:  true,
+	sdk.HookAfterCategoryCreate: true,
+	sdk.HookAfterCategoryUpdate: true,
+	sdk.HookAfterCategoryDelete: true,
+	sdk.HookAfterOrderCreate:    true,
+	sdk.HookAfterOrderUpdate:    true,
+	sdk.HookAfterCartAdd:        true,
+	sdk.HookAfterCartUpdate:     true,
+	sdk.HookAfterCartRemove:     true,
+	sdk.HookAfterCustomerCreate: true,
+	sdk.HookAfterCustomerUpdate: true,
+	sdk.HookAfterPaymentComplete: true,
+	sdk.HookAfterPaymentFailed:  true,
+	sdk.HookAfterCheckout:       true,
+}
 
 // Plugin forwards Stoa domain events to n8n via HTTP webhooks.
 type Plugin struct {
@@ -67,7 +87,7 @@ func (p *Plugin) Init(app *sdk.AppContext) error {
 
 	p.d = newDispatcher(cfg, p.logger)
 
-	p.registerHooks(app.Hooks)
+	p.registerHooks(app.Hooks, cfg.Hooks)
 	mountRoutes(app.Router, app.Auth, p.d, p.logger)
 
 	p.logger.Info().
@@ -80,30 +100,24 @@ func (p *Plugin) Init(app *sdk.AppContext) error {
 // Shutdown is a no-op; the HTTP client has no persistent connections.
 func (p *Plugin) Shutdown() error { return nil }
 
-// registerHooks subscribes to every after-hook so domain events are forwarded
-// to n8n. Before-hooks are intentionally excluded — they can abort operations,
-// which is not the responsibility of a notification integration.
-func (p *Plugin) registerHooks(hooks *sdk.HookRegistry) {
-	afterHooks := []string{
-		sdk.HookAfterProductCreate,
-		sdk.HookAfterProductUpdate,
-		sdk.HookAfterProductDelete,
-		sdk.HookAfterCategoryCreate,
-		sdk.HookAfterCategoryUpdate,
-		sdk.HookAfterCategoryDelete,
-		sdk.HookAfterOrderCreate,
-		sdk.HookAfterOrderUpdate,
-		sdk.HookAfterCartAdd,
-		sdk.HookAfterCartUpdate,
-		sdk.HookAfterCartRemove,
-		sdk.HookAfterCustomerCreate,
-		sdk.HookAfterCustomerUpdate,
-		sdk.HookAfterPaymentComplete,
-		sdk.HookAfterPaymentFailed,
-		sdk.HookAfterCheckout,
+// registerHooks subscribes to after-hooks so domain events are forwarded to n8n.
+// When enabled is nil, all after-hooks are registered. When enabled contains a
+// subset, only those hooks are registered. Before-hooks are never registered —
+// they can abort operations, which is not the responsibility of a notification
+// integration.
+func (p *Plugin) registerHooks(hooks *sdk.HookRegistry, enabled []string) {
+	// Build the list of hooks to register.
+	var selected []string
+	if enabled != nil {
+		selected = enabled
+	} else {
+		selected = make([]string, 0, len(validAfterHooks))
+		for name := range validAfterHooks {
+			selected = append(selected, name)
+		}
 	}
 
-	for _, name := range afterHooks {
+	for _, name := range selected {
 		name := name // capture loop var
 		hooks.On(name, func(ctx context.Context, event *sdk.HookEvent) error {
 			if err := p.d.Send(ctx, event); err != nil {
@@ -114,4 +128,6 @@ func (p *Plugin) registerHooks(hooks *sdk.HookRegistry) {
 			return nil
 		})
 	}
+
+	p.logger.Info().Int("count", len(selected)).Msg("registered hooks")
 }
