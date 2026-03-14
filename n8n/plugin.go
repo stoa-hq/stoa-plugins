@@ -68,7 +68,7 @@ func (p *Plugin) Init(app *sdk.AppContext) error {
 	p.d = newDispatcher(cfg, p.logger)
 
 	p.registerHooks(app.Hooks)
-	mountRoutes(app.Router, p.d, p.logger)
+	mountRoutes(app.Router, app.Auth, p.d, p.logger)
 
 	p.logger.Info().
 		Str("webhook_base_url", cfg.WebhookBaseURL).

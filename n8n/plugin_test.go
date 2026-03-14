@@ -9,9 +9,22 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/google/uuid"
 	"github.com/rs/zerolog"
 	"github.com/stoa-hq/stoa/pkg/sdk"
 )
+
+// noopAuth returns an AuthHelper that always passes authentication and returns
+// a fixed user ID. Use for tests that don't exercise auth logic.
+func noopAuth() *sdk.AuthHelper {
+	passthrough := func(next http.Handler) http.Handler { return next }
+	return &sdk.AuthHelper{
+		OptionalAuth: passthrough,
+		Required:     passthrough,
+		UserID:       func(ctx context.Context) uuid.UUID { return uuid.New() },
+		UserType:     func(ctx context.Context) string { return "admin" },
+	}
+}
 
 func testAppContext(t *testing.T, webhookBaseURL string) *sdk.AppContext {
 	t.Helper()
@@ -19,6 +32,7 @@ func testAppContext(t *testing.T, webhookBaseURL string) *sdk.AppContext {
 		Router: chi.NewRouter(),
 		Hooks:  sdk.NewHookRegistry(),
 		Logger: zerolog.Nop(),
+		Auth:   noopAuth(),
 		Config: map[string]interface{}{
 			"n8n": map[string]interface{}{
 				"webhook_base_url": webhookBaseURL,
@@ -90,6 +104,7 @@ func TestPlugin_Init_InvalidConfig(t *testing.T) {
 		Router: chi.NewRouter(),
 		Hooks:  sdk.NewHookRegistry(),
 		Logger: zerolog.Nop(),
+		Auth:   noopAuth(),
 		Config: map[string]interface{}{}, // missing n8n section
 	}
 
