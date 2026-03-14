@@ -16,9 +16,9 @@ import (
 )
 
 const (
-	maxWebhookBodyBytes        = 65536
-	maxPaymentIntentBodyBytes  = 4096
-	webhookProcessingTimeout   = 30 * time.Second
+	maxWebhookBodyBytes       = 65536
+	maxPaymentIntentBodyBytes = 4096
+	webhookProcessingTimeout  = 30 * time.Second
 )
 
 // mountRoutes registers all HTTP routes for the Stripe plugin.
