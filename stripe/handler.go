@@ -31,9 +31,9 @@ func mountRoutes(
 	webhookSecret string,
 	logger zerolog.Logger,
 ) {
-	// Store-facing route: requires authentication + order ownership check.
+	// Store-facing route: supports both authenticated and guest checkout.
 	router.Route("/api/v1/store/stripe", func(r chi.Router) {
-		r.Use(authHelper.Required)
+		r.Use(authHelper.OptionalAuth)
 		r.Post("/payment-intent",
 			paymentIntentHandler(sc, db, authHelper, logger))
 	})
@@ -54,18 +54,14 @@ func mountRoutes(
 type paymentIntentRequest struct {
 	OrderID         string `json:"order_id"`
 	PaymentMethodID string `json:"payment_method_id"`
+	GuestToken      string `json:"guest_token,omitempty"`
 }
 
 // paymentIntentHandler creates a Stripe PaymentIntent for an existing (pending) order.
-// It verifies that the authenticated user owns the order before proceeding.
+// For authenticated users it verifies order ownership; for guests it requires
+// the order to have no customer_id (guest order).
 func paymentIntentHandler(sc *stripeClient, db *pgxpool.Pool, authHelper *sdk.AuthHelper, logger zerolog.Logger) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		userID := authHelper.UserID(r.Context())
-		if userID == uuid.Nil {
-			writeError(w, http.StatusUnauthorized, "authentication required")
-			return
-		}
-
 		var req paymentIntentRequest
 		if err := json.NewDecoder(io.LimitReader(r.Body, maxPaymentIntentBodyBytes)).Decode(&req); err != nil {
 			writeError(w, http.StatusBadRequest, "invalid request body")
@@ -83,15 +79,31 @@ func paymentIntentHandler(sc *stripeClient, db *pgxpool.Pool, authHelper *sdk.Au
 			return
 		}
 
+		userID := authHelper.UserID(r.Context())
+
 		var (
 			total    int64
 			currency string
 			status   string
 		)
-		row := db.QueryRow(r.Context(),
-			`SELECT total, currency, status FROM orders WHERE id = $1 AND customer_id = $2`,
-			orderID, userID)
-		if err := row.Scan(&total, &currency, &status); err != nil {
+
+		// Authenticated users: ownership check via customer_id.
+		// Guests: ownership check via guest_token.
+		var query string
+		var args []interface{}
+		if userID != uuid.Nil {
+			query = `SELECT total, currency, status FROM orders WHERE id = $1 AND customer_id = $2`
+			args = []interface{}{orderID, userID}
+		} else {
+			if req.GuestToken == "" {
+				writeError(w, http.StatusUnauthorized, "authentication or guest token required")
+				return
+			}
+			query = `SELECT total, currency, status FROM orders WHERE id = $1 AND guest_token = $2 AND customer_id IS NULL`
+			args = []interface{}{orderID, req.GuestToken}
+		}
+
+		if err := db.QueryRow(r.Context(), query, args...).Scan(&total, &currency, &status); err != nil {
 			logger.Error().Err(err).Str("order_id", orderID.String()).Msg("stripe: fetch order")
 			writeError(w, http.StatusNotFound, "order not found")
 			return

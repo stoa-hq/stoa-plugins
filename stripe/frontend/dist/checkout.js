@@ -14,21 +14,31 @@
     });
   }
 
-  var STYLES = [
-    ':host { display: block; }',
-    '.stripe-container { padding: 1.5rem; border: 1px solid #e5e7eb; border-radius: 0.75rem; background: #fff; }',
-    '.stripe-header { display: flex; align-items: center; gap: 0.5rem; margin-bottom: 1rem; }',
-    '.stripe-header svg { flex-shrink: 0; }',
-    '.stripe-header h3 { font-size: 1rem; font-weight: 600; color: #111827; margin: 0; }',
-    '#payment-element { min-height: 80px; }',
-    '.stripe-error { color: #dc2626; font-size: 0.875rem; margin-top: 0.5rem; display: none; }',
-    '.stripe-btn { display: flex; align-items: center; justify-content: center; gap: 0.5rem; width: 100%; margin-top: 1rem; padding: 0.75rem 1.5rem; font-size: 0.9375rem; font-weight: 600; color: #fff; background: #635bff; border: none; border-radius: 0.5rem; cursor: pointer; transition: background 0.15s; }',
-    '.stripe-btn:hover:not(:disabled) { background: #4f46e5; }',
-    '.stripe-btn:disabled { opacity: 0.6; cursor: not-allowed; }',
-    '.stripe-spinner { width: 1.25rem; height: 1.25rem; border: 2px solid rgba(255,255,255,0.3); border-top-color: #fff; border-radius: 50%; animation: spin 0.6s linear infinite; }',
-    '@keyframes spin { to { transform: rotate(360deg); } }',
-    '.stripe-loading { display: flex; align-items: center; justify-content: center; padding: 2rem; color: #6b7280; font-size: 0.875rem; gap: 0.5rem; }'
-  ].join('\n');
+  var CSS_CLASS = 'stoa-stripe-checkout';
+
+  // Inject scoped styles once into the document head.
+  var stylesInjected = false;
+  function injectStyles() {
+    if (stylesInjected) return;
+    stylesInjected = true;
+    var style = document.createElement('style');
+    style.textContent = [
+      '.' + CSS_CLASS + ' { display: block; }',
+      '.' + CSS_CLASS + ' .stripe-container { padding: 1.5rem; border: 1px solid #e5e7eb; border-radius: 0.75rem; background: #fff; }',
+      '.' + CSS_CLASS + ' .stripe-header { display: flex; align-items: center; gap: 0.5rem; margin-bottom: 1rem; }',
+      '.' + CSS_CLASS + ' .stripe-header svg { flex-shrink: 0; }',
+      '.' + CSS_CLASS + ' .stripe-header h3 { font-size: 1rem; font-weight: 600; color: #111827; margin: 0; }',
+      '.' + CSS_CLASS + ' .stripe-mount { min-height: 80px; }',
+      '.' + CSS_CLASS + ' .stripe-error { color: #dc2626; font-size: 0.875rem; margin-top: 0.5rem; display: none; }',
+      '.' + CSS_CLASS + ' .stripe-btn { display: flex; align-items: center; justify-content: center; gap: 0.5rem; width: 100%; margin-top: 1rem; padding: 0.75rem 1.5rem; font-size: 0.9375rem; font-weight: 600; color: #fff; background: #635bff; border: none; border-radius: 0.5rem; cursor: pointer; transition: background 0.15s; }',
+      '.' + CSS_CLASS + ' .stripe-btn:hover:not(:disabled) { background: #4f46e5; }',
+      '.' + CSS_CLASS + ' .stripe-btn:disabled { opacity: 0.6; cursor: not-allowed; }',
+      '.' + CSS_CLASS + ' .stripe-spinner { width: 1.25rem; height: 1.25rem; border: 2px solid rgba(255,255,255,0.3); border-top-color: #fff; border-radius: 50%; animation: stoa-stripe-spin 0.6s linear infinite; }',
+      '@keyframes stoa-stripe-spin { to { transform: rotate(360deg); } }',
+      '.' + CSS_CLASS + ' .stripe-loading { display: flex; align-items: center; justify-content: center; padding: 2rem; color: #6b7280; font-size: 0.875rem; gap: 0.5rem; }'
+    ].join('\n');
+    document.head.appendChild(style);
+  }
 
   function createSVGIcon() {
     var svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
@@ -63,7 +73,6 @@
   class StoaStripeCheckout extends HTMLElement {
     constructor() {
       super();
-      this._shadow = this.attachShadow({ mode: 'open' });
       this._initialized = false;
       this._context = null;
       this._apiClient = null;
@@ -88,9 +97,8 @@
       if (!this._context.orderId) return;
       this._initialized = true;
 
-      var style = document.createElement('style');
-      style.textContent = STYLES;
-      this._shadow.appendChild(style);
+      injectStyles();
+      this.classList.add(CSS_CLASS);
 
       var container = el('div', { className: 'stripe-container' });
       var loadingEl = el('div', { className: 'stripe-loading' }, [
@@ -98,7 +106,7 @@
         'Payment wird geladen\u2026'
       ]);
       container.appendChild(loadingEl);
-      this._shadow.appendChild(container);
+      this.appendChild(container);
 
       this._initPayment(container).catch(function (err) {
         container.textContent = '';
@@ -111,12 +119,15 @@
     }
 
     async _initPayment(container) {
-      var res = await this._apiClient.post('/store/stripe/payment-intent', {
+      var body = {
         order_id: this._context.orderId,
         payment_method_id: this._context.paymentMethodId
-      });
+      };
+      if (this._context.guestToken) {
+        body.guest_token = this._context.guestToken;
+      }
+      var data = await this._apiClient.post('/store/stripe/payment-intent', body);
 
-      var data = res.data;
       if (!data || !data.client_secret) {
         throw new Error('Invalid payment intent response');
       }
@@ -136,7 +147,7 @@
       });
       var paymentElement = elements.create('payment');
 
-      // Build UI using safe DOM methods
+      // Build UI — all in Light DOM so Stripe can find the mount point.
       container.textContent = '';
 
       var header = el('div', { className: 'stripe-header' }, [
@@ -145,15 +156,15 @@
       ]);
       container.appendChild(header);
 
-      var mountPoint = el('div', { id: 'payment-element' });
+      var mountPoint = el('div', { className: 'stripe-mount' });
       container.appendChild(mountPoint);
 
-      var errorEl = el('div', { id: 'error-msg', className: 'stripe-error' });
+      var errorEl = el('div', { className: 'stripe-error' });
       container.appendChild(errorEl);
 
       var spinner = el('div', { className: 'stripe-spinner' });
       var btnText = document.createTextNode('Jetzt bezahlen');
-      var btn = el('button', { id: 'pay-btn', className: 'stripe-btn', type: 'button' }, [btnText]);
+      var btn = el('button', { className: 'stripe-btn', type: 'button' }, [btnText]);
       btn.disabled = true;
       container.appendChild(btn);
 

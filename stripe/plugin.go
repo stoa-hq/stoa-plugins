@@ -38,7 +38,7 @@ import (
 
 const (
 	pluginName    = "stripe"
-	pluginVersion = "0.1.1"
+	pluginVersion = "0.2.0"
 )
 
 // Plugin integrates Stripe as a payment provider for Stoa.
@@ -94,7 +94,10 @@ func (p *Plugin) UIExtensions() []sdk.UIExtension {
 				TagName:         "stoa-stripe-checkout",
 				ScriptURL:       "/plugins/stripe/assets/checkout.js",
 				Integrity:       sriHash("frontend/dist/checkout.js"),
-				ExternalScripts: []string{"https://js.stripe.com/v3/"},
+				ExternalScripts: []string{
+					"https://js.stripe.com/v3/",
+					"https://api.stripe.com",
+				},
 			},
 		},
 	}
