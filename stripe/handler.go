@@ -60,6 +60,7 @@ type paymentIntentRequest struct {
 	GuestToken      string `json:"guest_token,omitempty"`
 	Amount          int64  `json:"amount,omitempty"`
 	Currency        string `json:"currency,omitempty"`
+	Email           string `json:"email,omitempty"`
 }
 
 // paymentIntentHandler creates a Stripe PaymentIntent.
@@ -92,7 +93,7 @@ func paymentIntentHandler(sc *stripeClient, db *pgxpool.Pool, authHelper *sdk.Au
 			}
 
 			customerID := authHelper.UserID(r.Context())
-			result, err := sc.CreatePreOrderPaymentIntent(r.Context(), paymentMethodID, req.Amount, req.Currency, customerID, req.GuestToken)
+			result, err := sc.CreatePreOrderPaymentIntent(r.Context(), paymentMethodID, req.Amount, req.Currency, customerID, req.GuestToken, req.Email)
 			if err != nil {
 				logger.Error().Err(err).Msg("stripe: create pre-order payment intent")
 				writeError(w, http.StatusBadGateway, "failed to create payment intent")

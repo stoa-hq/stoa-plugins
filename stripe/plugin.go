@@ -38,7 +38,7 @@ import (
 
 const (
 	pluginName    = "stripe"
-	pluginVersion = "0.2.2"
+	pluginVersion = "0.3.0"
 )
 
 // Plugin integrates Stripe as a payment provider for Stoa.

@@ -106,7 +106,7 @@ func (s *stripeClient) RetrievePaymentIntent(_ context.Context, id string) (*str
 
 // CreatePreOrderPaymentIntent creates a Stripe PaymentIntent before an order exists.
 // Unlike CreatePaymentIntent, it does not require an order ID.
-// customerID and guestToken are optional; they are added to the PI metadata when provided.
+// customerID, guestToken, and receiptEmail are optional; they are included when provided.
 func (s *stripeClient) CreatePreOrderPaymentIntent(
 	_ context.Context,
 	paymentMethodID uuid.UUID,
@@ -114,6 +114,7 @@ func (s *stripeClient) CreatePreOrderPaymentIntent(
 	currency string,
 	customerID uuid.UUID,
 	guestToken string,
+	receiptEmail string,
 ) (*PaymentIntentResult, error) {
 	if currency == "" {
 		currency = s.currency
@@ -138,6 +139,9 @@ func (s *stripeClient) CreatePreOrderPaymentIntent(
 			Enabled: stripe.Bool(true),
 		},
 		Metadata: metadata,
+	}
+	if receiptEmail != "" {
+		params.ReceiptEmail = stripe.String(receiptEmail)
 	}
 
 	pi, err := s.api.PaymentIntents.New(params)

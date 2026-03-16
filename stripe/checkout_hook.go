@@ -7,7 +7,6 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/rs/zerolog"
-	stripelib "github.com/stripe/stripe-go/v82"
 	"github.com/stoa-hq/stoa/pkg/sdk"
 )
 
@@ -109,26 +108,16 @@ func finalizePreOrderPayment(ctx context.Context, event *sdk.HookEvent, sc *stri
 		return
 	}
 
-	// Look up the order by payment_reference to get its ID, payment_method_id, and billing_address.
+	// Look up the order by payment_reference to get its ID and payment_method_id.
 	var orderID, paymentMethodID uuid.UUID
-	var billingAddress []byte
 	err = db.QueryRow(ctx,
-		`SELECT id, payment_method_id, billing_address FROM orders WHERE payment_reference = $1`,
+		`SELECT id, payment_method_id FROM orders WHERE payment_reference = $1`,
 		ref,
-	).Scan(&orderID, &paymentMethodID, &billingAddress)
+	).Scan(&orderID, &paymentMethodID)
 	if err != nil {
 		logger.Error().Err(err).Str("payment_reference", ref).
 			Msg("stripe: after_checkout: failed to find order by payment_reference")
 		return
-	}
-
-	// Set receipt_email on the PaymentIntent now that the order (with billing address) exists.
-	if email := extractReceiptEmail(billingAddress); email != "" {
-		if _, updateErr := sc.api.PaymentIntents.Update(ref, &stripelib.PaymentIntentParams{
-			ReceiptEmail: stripelib.String(email),
-		}); updateErr != nil {
-			logger.Warn().Err(updateErr).Str("payment_intent_id", ref).Msg("stripe: after_checkout: failed to set receipt email")
-		}
 	}
 
 	// Capture immediately when CaptureOn == "confirmed".

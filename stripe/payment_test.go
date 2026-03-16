@@ -124,7 +124,7 @@ func TestCreatePreOrderPaymentIntent_CustomerIDInMetadata(t *testing.T) {
 	customerID := uuid.MustParse("11111111-1111-1111-1111-111111111111")
 	pmID := uuid.MustParse("22222222-2222-2222-2222-222222222222")
 
-	_, err := sc.CreatePreOrderPaymentIntent(context.Background(), pmID, 1999, "EUR", customerID, "")
+	_, err := sc.CreatePreOrderPaymentIntent(context.Background(), pmID, 1999, "EUR", customerID, "", "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -133,6 +133,29 @@ func TestCreatePreOrderPaymentIntent_CustomerIDInMetadata(t *testing.T) {
 	}
 	if strings.Contains(body, "stoa_guest_token") {
 		t.Error("stoa_guest_token should not be present when empty")
+	}
+}
+
+func TestCreatePreOrderPaymentIntent_ReceiptEmailInRequest(t *testing.T) {
+	var body string
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		bodyBytes, _ := io.ReadAll(r.Body)
+		body = string(bodyBytes)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"id":"pi_test","object":"payment_intent","amount":1999,"currency":"eur","client_secret":"pi_test_secret","status":"requires_payment_method"}`))
+	}))
+	t.Cleanup(ts.Close)
+	sc := newTestStripeClientFromServer(t, ts)
+
+	pmID := uuid.MustParse("22222222-2222-2222-2222-222222222222")
+
+	_, err := sc.CreatePreOrderPaymentIntent(context.Background(), pmID, 1999, "EUR", uuid.Nil, "", "test@example.com")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(body, "receipt_email") {
+		t.Error("expected receipt_email in request body")
 	}
 }
 
@@ -151,7 +174,7 @@ func TestCreatePreOrderPaymentIntent_GuestTokenInMetadata(t *testing.T) {
 	pmID := uuid.MustParse("22222222-2222-2222-2222-222222222222")
 	guestToken := "abc-guest-123"
 
-	_, err := sc.CreatePreOrderPaymentIntent(context.Background(), pmID, 1999, "EUR", uuid.Nil, guestToken)
+	_, err := sc.CreatePreOrderPaymentIntent(context.Background(), pmID, 1999, "EUR", uuid.Nil, guestToken, "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
