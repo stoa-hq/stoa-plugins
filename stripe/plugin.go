@@ -71,9 +71,11 @@ func (p *Plugin) Init(app *sdk.AppContext) error {
 	mountRoutes(app.Router, p.sc, app.DB, app.Hooks, app.Auth, cfg.WebhookSecret, p.logger)
 
 	// Register checkout hooks:
-	// - before: verifies Stripe PaymentIntent status
-	// - after: creates transaction + confirms order for pay-first flow
-	registerCheckoutHooks(app.Hooks, p.sc, app.DB, p.logger)
+	// - before: verifies Stripe PaymentIntent is authorized
+	// - after: captures (if CaptureOn=confirmed) + creates transaction + confirms order
+	// - after_failed: cancels PaymentIntent (no money moved)
+	// - order_update: captures when order reaches CaptureOn status (deferred capture)
+	registerCheckoutHooks(app.Hooks, p.sc, app.DB, cfg, p.logger)
 
 	// Serve embedded frontend assets at /plugins/stripe/assets/*
 	if app.AssetRouter != nil {

@@ -12,11 +12,14 @@ import (
 //	stripe.publishable_key   — Stripe publishable key (pk_live_... or pk_test_...)
 //	stripe.webhook_secret    — Stripe webhook signing secret (whsec_...)
 //	stripe.currency          — Default ISO 4217 currency code (default: EUR)
+//	stripe.capture_on        — Order status that triggers payment capture (default: "confirmed")
+//	                           Example: capture_on: "shipped"
 type Config struct {
 	SecretKey      string
 	PublishableKey string
 	WebhookSecret  string
 	Currency       string
+	CaptureOn      string // "confirmed" (default) | any order status e.g. "shipped"
 }
 
 func configFrom(raw map[string]interface{}) (Config, error) {
@@ -54,6 +57,13 @@ func configFrom(raw map[string]interface{}) (Config, error) {
 
 	if v, ok := m["currency"].(string); ok && v != "" {
 		cfg.Currency = v
+	}
+
+	if v, ok := m["capture_on"].(string); ok && v != "" {
+		cfg.CaptureOn = v
+	}
+	if cfg.CaptureOn == "" {
+		cfg.CaptureOn = "confirmed"
 	}
 
 	return cfg, nil

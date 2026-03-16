@@ -122,8 +122,9 @@ func (s *stripeClient) CreatePreOrderPaymentIntent(
 	}
 
 	params := &stripe.PaymentIntentParams{
-		Amount:   stripe.Int64(amount),
-		Currency: stripe.String(strings.ToLower(currency)),
+		Amount:        stripe.Int64(amount),
+		Currency:      stripe.String(strings.ToLower(currency)),
+		CaptureMethod: stripe.String(string(stripe.PaymentIntentCaptureMethodManual)),
 		AutomaticPaymentMethods: &stripe.PaymentIntentAutomaticPaymentMethodsParams{
 			Enabled: stripe.Bool(true),
 		},
@@ -142,6 +143,35 @@ func (s *stripeClient) CreatePreOrderPaymentIntent(
 		Amount:         pi.Amount,
 		Currency:       string(pi.Currency),
 	}, nil
+}
+
+// RefundPaymentIntent creates a full refund for the given PaymentIntent ID.
+func (s *stripeClient) RefundPaymentIntent(_ context.Context, paymentIntentID string) error {
+	_, err := s.api.Refunds.New(&stripe.RefundParams{
+		PaymentIntent: stripe.String(paymentIntentID),
+	})
+	if err != nil {
+		return fmt.Errorf("stripe: refund payment intent %s: %w", paymentIntentID, err)
+	}
+	return nil
+}
+
+// CapturePaymentIntent captures an authorized PaymentIntent.
+func (s *stripeClient) CapturePaymentIntent(_ context.Context, paymentIntentID string) error {
+	_, err := s.api.PaymentIntents.Capture(paymentIntentID, nil)
+	if err != nil {
+		return fmt.Errorf("stripe: capture payment intent %s: %w", paymentIntentID, err)
+	}
+	return nil
+}
+
+// CancelPaymentIntent cancels an authorized PaymentIntent without moving any money.
+func (s *stripeClient) CancelPaymentIntent(_ context.Context, paymentIntentID string) error {
+	_, err := s.api.PaymentIntents.Cancel(paymentIntentID, nil)
+	if err != nil {
+		return fmt.Errorf("stripe: cancel payment intent %s: %w", paymentIntentID, err)
+	}
+	return nil
 }
 
 // DashboardURL returns the Stripe Dashboard URL for a PaymentIntent.
