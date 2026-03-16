@@ -155,6 +155,8 @@ func paymentIntentHandler(sc *stripeClient, db *pgxpool.Pool, authHelper *sdk.Au
 		oc := OrderContext{
 			OrderNumber:  orderNumber,
 			ReceiptEmail: extractReceiptEmail(billingAddress),
+			CustomerID:   userID,
+			GuestToken:   req.GuestToken,
 		}
 
 		result, err := sc.CreatePaymentIntent(r.Context(), orderID, paymentMethodID, total, currency, oc)

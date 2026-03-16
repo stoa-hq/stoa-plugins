@@ -185,3 +185,107 @@ func TestCreatePreOrderPaymentIntent_GuestTokenInMetadata(t *testing.T) {
 		t.Error("stoa_customer_id should not be present when uuid.Nil")
 	}
 }
+
+func TestCreatePaymentIntent_CustomerIDInMetadata(t *testing.T) {
+	var body string
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		bodyBytes, _ := io.ReadAll(r.Body)
+		body = string(bodyBytes)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"id":"pi_test","object":"payment_intent","amount":1999,"currency":"eur","client_secret":"pi_test_secret","status":"requires_payment_method"}`))
+	}))
+	t.Cleanup(ts.Close)
+	sc := newTestStripeClientFromServer(t, ts)
+
+	orderID := uuid.MustParse("11111111-1111-1111-1111-111111111111")
+	customerID := uuid.MustParse("22222222-2222-2222-2222-222222222222")
+	pmID := uuid.MustParse("33333333-3333-3333-3333-333333333333")
+
+	oc := OrderContext{
+		OrderNumber:  "ORD-001",
+		ReceiptEmail: "customer@example.com",
+		CustomerID:   customerID,
+		GuestToken:   "",
+	}
+
+	_, err := sc.CreatePaymentIntent(context.Background(), orderID, pmID, 1999, "EUR", oc)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(body, "stoa_customer_id") {
+		t.Error("expected stoa_customer_id in request body")
+	}
+	if strings.Contains(body, "stoa_guest_token") {
+		t.Error("stoa_guest_token should not be present when empty")
+	}
+}
+
+func TestCreatePaymentIntent_GuestTokenInMetadata(t *testing.T) {
+	var body string
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		bodyBytes, _ := io.ReadAll(r.Body)
+		body = string(bodyBytes)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"id":"pi_test","object":"payment_intent","amount":1999,"currency":"eur","client_secret":"pi_test_secret","status":"requires_payment_method"}`))
+	}))
+	t.Cleanup(ts.Close)
+	sc := newTestStripeClientFromServer(t, ts)
+
+	orderID := uuid.MustParse("11111111-1111-1111-1111-111111111111")
+	pmID := uuid.MustParse("33333333-3333-3333-3333-333333333333")
+	guestToken := "guest-abc-123"
+
+	oc := OrderContext{
+		OrderNumber:  "ORD-002",
+		ReceiptEmail: "guest@example.com",
+		CustomerID:   uuid.Nil,
+		GuestToken:   guestToken,
+	}
+
+	_, err := sc.CreatePaymentIntent(context.Background(), orderID, pmID, 1999, "EUR", oc)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(body, "stoa_guest_token") {
+		t.Error("expected stoa_guest_token in request body")
+	}
+	if strings.Contains(body, "stoa_customer_id") {
+		t.Error("stoa_customer_id should not be present when uuid.Nil")
+	}
+}
+
+func TestCreatePaymentIntent_ReceiptEmailInRequest(t *testing.T) {
+	var body string
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		bodyBytes, _ := io.ReadAll(r.Body)
+		body = string(bodyBytes)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"id":"pi_test","object":"payment_intent","amount":1999,"currency":"eur","client_secret":"pi_test_secret","status":"requires_payment_method"}`))
+	}))
+	t.Cleanup(ts.Close)
+	sc := newTestStripeClientFromServer(t, ts)
+
+	orderID := uuid.MustParse("11111111-1111-1111-1111-111111111111")
+	pmID := uuid.MustParse("33333333-3333-3333-3333-333333333333")
+
+	oc := OrderContext{
+		OrderNumber:  "ORD-003",
+		ReceiptEmail: "receipt@example.com",
+		CustomerID:   uuid.Nil,
+		GuestToken:   "",
+	}
+
+	_, err := sc.CreatePaymentIntent(context.Background(), orderID, pmID, 1999, "EUR", oc)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(body, "receipt_email") {
+		t.Error("expected receipt_email in request body")
+	}
+	if !strings.Contains(body, "receipt") {
+		t.Error("expected receipt email data in request body")
+	}
+}

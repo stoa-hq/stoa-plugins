@@ -40,6 +40,8 @@ type PaymentIntentResult struct {
 type OrderContext struct {
 	OrderNumber  string
 	ReceiptEmail string
+	CustomerID   uuid.UUID
+	GuestToken   string
 }
 
 // CreatePaymentIntent creates a Stripe PaymentIntent for the given order.
@@ -63,6 +65,12 @@ func (s *stripeClient) CreatePaymentIntent(
 	}
 	if oc.OrderNumber != "" {
 		metadata["stoa_order_number"] = oc.OrderNumber
+	}
+	if oc.CustomerID != uuid.Nil {
+		metadata["stoa_customer_id"] = oc.CustomerID.String()
+	}
+	if oc.GuestToken != "" {
+		metadata["stoa_guest_token"] = oc.GuestToken
 	}
 
 	params := &stripe.PaymentIntentParams{
