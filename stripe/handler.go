@@ -91,7 +91,8 @@ func paymentIntentHandler(sc *stripeClient, db *pgxpool.Pool, authHelper *sdk.Au
 				return
 			}
 
-			result, err := sc.CreatePreOrderPaymentIntent(r.Context(), paymentMethodID, req.Amount, req.Currency)
+			customerID := authHelper.UserID(r.Context())
+			result, err := sc.CreatePreOrderPaymentIntent(r.Context(), paymentMethodID, req.Amount, req.Currency, customerID, req.GuestToken)
 			if err != nil {
 				logger.Error().Err(err).Msg("stripe: create pre-order payment intent")
 				writeError(w, http.StatusBadGateway, "failed to create payment intent")
