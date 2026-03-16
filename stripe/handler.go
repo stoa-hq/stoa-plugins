@@ -3,8 +3,10 @@ package stripe
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -51,15 +53,19 @@ func mountRoutes(
 }
 
 // paymentIntentRequest is the body expected by POST /api/v1/store/stripe/payment-intent.
+// Either order_id (post-order) or amount+currency (pre-order) must be provided.
 type paymentIntentRequest struct {
-	OrderID         string `json:"order_id"`
+	OrderID         string `json:"order_id,omitempty"`
 	PaymentMethodID string `json:"payment_method_id"`
 	GuestToken      string `json:"guest_token,omitempty"`
+	Amount          int64  `json:"amount,omitempty"`
+	Currency        string `json:"currency,omitempty"`
 }
 
-// paymentIntentHandler creates a Stripe PaymentIntent for an existing (pending) order.
-// For authenticated users it verifies order ownership; for guests it requires
-// the order to have no customer_id (guest order).
+// paymentIntentHandler creates a Stripe PaymentIntent.
+// Two modes are supported:
+//   - Post-order: order_id is provided → fetches order from DB, verifies ownership.
+//   - Pre-order: amount + currency are provided, order_id is empty → creates PI without an order.
 func paymentIntentHandler(sc *stripeClient, db *pgxpool.Pool, authHelper *sdk.AuthHelper, logger zerolog.Logger) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var req paymentIntentRequest
@@ -68,23 +74,49 @@ func paymentIntentHandler(sc *stripeClient, db *pgxpool.Pool, authHelper *sdk.Au
 			return
 		}
 
-		orderID, err := uuid.Parse(req.OrderID)
-		if err != nil {
-			writeError(w, http.StatusBadRequest, "invalid order_id")
-			return
-		}
 		paymentMethodID, err := uuid.Parse(req.PaymentMethodID)
 		if err != nil {
 			writeError(w, http.StatusBadRequest, "invalid payment_method_id")
 			return
 		}
 
+		// Pre-order mode: create PI without an existing order.
+		if req.OrderID == "" {
+			if req.Amount <= 0 {
+				writeError(w, http.StatusBadRequest, "amount is required for pre-order payment intents")
+				return
+			}
+			if req.Currency == "" {
+				writeError(w, http.StatusBadRequest, "currency is required for pre-order payment intents")
+				return
+			}
+
+			result, err := sc.CreatePreOrderPaymentIntent(r.Context(), paymentMethodID, req.Amount, req.Currency)
+			if err != nil {
+				logger.Error().Err(err).Msg("stripe: create pre-order payment intent")
+				writeError(w, http.StatusBadGateway, "failed to create payment intent")
+				return
+			}
+
+			writeJSON(w, http.StatusCreated, map[string]interface{}{"data": result})
+			return
+		}
+
+		// Post-order mode: order_id provided.
+		orderID, err := uuid.Parse(req.OrderID)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "invalid order_id")
+			return
+		}
+
 		userID := authHelper.UserID(r.Context())
 
 		var (
-			total    int64
-			currency string
-			status   string
+			total          int64
+			currency       string
+			status         string
+			orderNumber    string
+			billingAddress []byte
 		)
 
 		// Authenticated users: ownership check via customer_id.
@@ -92,18 +124,18 @@ func paymentIntentHandler(sc *stripeClient, db *pgxpool.Pool, authHelper *sdk.Au
 		var query string
 		var args []interface{}
 		if userID != uuid.Nil {
-			query = `SELECT total, currency, status FROM orders WHERE id = $1 AND customer_id = $2`
+			query = `SELECT total, currency, status, order_number, billing_address FROM orders WHERE id = $1 AND customer_id = $2`
 			args = []interface{}{orderID, userID}
 		} else {
 			if req.GuestToken == "" {
 				writeError(w, http.StatusUnauthorized, "authentication or guest token required")
 				return
 			}
-			query = `SELECT total, currency, status FROM orders WHERE id = $1 AND guest_token = $2 AND customer_id IS NULL`
+			query = `SELECT total, currency, status, order_number, billing_address FROM orders WHERE id = $1 AND guest_token = $2 AND customer_id IS NULL`
 			args = []interface{}{orderID, req.GuestToken}
 		}
 
-		if err := db.QueryRow(r.Context(), query, args...).Scan(&total, &currency, &status); err != nil {
+		if err := db.QueryRow(r.Context(), query, args...).Scan(&total, &currency, &status, &orderNumber, &billingAddress); err != nil {
 			logger.Error().Err(err).Str("order_id", orderID.String()).Msg("stripe: fetch order")
 			writeError(w, http.StatusNotFound, "order not found")
 			return
@@ -118,11 +150,27 @@ func paymentIntentHandler(sc *stripeClient, db *pgxpool.Pool, authHelper *sdk.Au
 			return
 		}
 
-		result, err := sc.CreatePaymentIntent(r.Context(), orderID, paymentMethodID, total, currency)
+		oc := OrderContext{
+			OrderNumber:  orderNumber,
+			ReceiptEmail: extractReceiptEmail(billingAddress),
+		}
+
+		result, err := sc.CreatePaymentIntent(r.Context(), orderID, paymentMethodID, total, currency, oc)
 		if err != nil {
 			logger.Error().Err(err).Str("order_id", orderID.String()).Msg("stripe: create payment intent")
 			writeError(w, http.StatusBadGateway, "failed to create payment intent")
 			return
+		}
+
+		// Insert a "pending" transaction so it is immediately visible in the
+		// Admin Panel. The webhook will later update the status to
+		// "completed" or "failed".
+		if err := insertPendingTransaction(r.Context(), db, orderID, paymentMethodID, result.ID, result.Amount, result.Currency); err != nil {
+			logger.Error().Err(err).
+				Str("order_id", orderID.String()).
+				Str("payment_intent_id", result.ID).
+				Msg("stripe: insert pending transaction")
+			// Non-fatal — the payment intent was already created.
 		}
 
 		writeJSON(w, http.StatusCreated, map[string]interface{}{"data": result})
@@ -218,4 +266,44 @@ func writeError(w http.ResponseWriter, status int, detail string) {
 	writeJSON(w, status, map[string]interface{}{
 		"errors": []map[string]string{{"detail": detail}},
 	})
+}
+
+// insertPendingTransaction creates a "pending" payment_transaction so the
+// Admin Panel can display the transaction immediately after PI creation.
+// Uses ON CONFLICT DO NOTHING because the webhook may have already arrived
+// (race condition in test mode with instant confirmation).
+func insertPendingTransaction(
+	ctx context.Context,
+	db *pgxpool.Pool,
+	orderID, paymentMethodID uuid.UUID,
+	providerRef string,
+	amount int64,
+	currency string,
+) error {
+	_, err := db.Exec(ctx, `
+		INSERT INTO payment_transactions
+			(id, order_id, payment_method_id, status, amount, currency, provider_reference, created_at)
+		VALUES ($1, $2, $3, 'pending', $4, $5, $6, NOW())
+		ON CONFLICT (provider_reference) WHERE provider_reference IS NOT NULL DO NOTHING`,
+		uuid.New(), orderID, paymentMethodID, amount, strings.ToUpper(currency), providerRef,
+	)
+	if err != nil {
+		return fmt.Errorf("insert pending transaction: %w", err)
+	}
+	return nil
+}
+
+// extractReceiptEmail extracts the email from a JSON-encoded billing address.
+// Returns an empty string if the address is nil, empty, or contains no email.
+func extractReceiptEmail(raw []byte) string {
+	if len(raw) == 0 {
+		return ""
+	}
+	var addr struct {
+		Email string `json:"email"`
+	}
+	if err := json.Unmarshal(raw, &addr); err != nil {
+		return ""
+	}
+	return addr.Email
 }

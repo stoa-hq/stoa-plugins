@@ -94,7 +94,8 @@
 
     _tryInit() {
       if (this._initialized || !this._context || !this._apiClient || !this.isConnected) return;
-      if (!this._context.orderId) return;
+      // Support both pre-order (amount+currency) and post-order (orderId) modes.
+      if (!this._context.orderId && !this._context.amount) return;
       this._initialized = true;
 
       injectStyles();
@@ -119,12 +120,23 @@
     }
 
     async _initPayment(container) {
-      var body = {
-        order_id: this._context.orderId,
-        payment_method_id: this._context.paymentMethodId
-      };
-      if (this._context.guestToken) {
-        body.guest_token = this._context.guestToken;
+      var body;
+      if (this._context.orderId) {
+        // Post-order mode: create PI for an existing order.
+        body = {
+          order_id: this._context.orderId,
+          payment_method_id: this._context.paymentMethodId
+        };
+        if (this._context.guestToken) {
+          body.guest_token = this._context.guestToken;
+        }
+      } else {
+        // Pre-order mode: create PI with amount and currency.
+        body = {
+          amount: this._context.amount,
+          currency: this._context.currency || 'EUR',
+          payment_method_id: this._context.paymentMethodId
+        };
       }
       var data = await this._apiClient.post('/store/stripe/payment-intent', body);
 

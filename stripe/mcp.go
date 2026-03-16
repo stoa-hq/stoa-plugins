@@ -17,11 +17,13 @@ type toolAdder interface {
 }
 
 // RegisterStoreMCPTools implements sdk.MCPStorePlugin.
-// It adds the store_stripe_create_payment_intent tool to the Store MCP server.
+// It adds Stripe tools to the Store MCP server.
 func (p *Plugin) RegisterStoreMCPTools(srv any, client sdk.StoreAPIClient) {
 	s := srv.(toolAdder)
 	t, h := stripeCreatePaymentIntentTool(client)
 	s.AddTool(t, h)
+	t2, h2 := stripeCreatePreOrderPaymentIntentTool(client)
+	s.AddTool(t2, h2)
 }
 
 func stripeCreatePaymentIntentTool(client sdk.StoreAPIClient) (mcp.Tool, server.ToolHandlerFunc) {
@@ -50,6 +52,45 @@ func stripeCreatePaymentIntentTool(client sdk.StoreAPIClient) (mcp.Tool, server.
 			// Return a sanitized error to MCP consumers — do not leak
 			// internal URLs, connection details, or Stripe error specifics.
 			return mcp.NewToolResultError("failed to create payment intent"), nil
+		}
+		return formatMCPResult(data), nil
+	}
+	return tool, handler
+}
+
+func stripeCreatePreOrderPaymentIntentTool(client sdk.StoreAPIClient) (mcp.Tool, server.ToolHandlerFunc) {
+	tool := mcp.NewTool("store_stripe_create_preorder_payment_intent",
+		mcp.WithDescription(
+			"Create a Stripe PaymentIntent before placing an order (pay-first flow). "+
+				"Returns a payment_intent_id to pass as payment_reference to store_checkout.",
+		),
+		mcp.WithNumber("amount",
+			mcp.Description("Total amount in cents (e.g. 4999 for €49.99)"),
+			mcp.Required(),
+		),
+		mcp.WithString("currency",
+			mcp.Description("Three-letter currency code (e.g. EUR)"),
+			mcp.Required(),
+		),
+		mcp.WithString("payment_method_id",
+			mcp.Description("UUID of the Stoa PaymentMethod configured for Stripe (provider = stripe)"),
+			mcp.Required(),
+		),
+	)
+	handler := func(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		args := req.GetArguments()
+		amountRaw, _ := args["amount"].(float64)
+		if amountRaw <= 0 {
+			return mcp.NewToolResultError("amount must be positive"), nil
+		}
+		body := map[string]interface{}{
+			"amount":            int64(amountRaw),
+			"currency":          req.GetString("currency", ""),
+			"payment_method_id": req.GetString("payment_method_id", ""),
+		}
+		data, err := client.Post("/api/v1/store/stripe/payment-intent", body)
+		if err != nil {
+			return mcp.NewToolResultError("failed to create pre-order payment intent"), nil
 		}
 		return formatMCPResult(data), nil
 	}

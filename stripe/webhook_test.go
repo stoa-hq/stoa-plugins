@@ -1,9 +1,11 @@
 package stripe
 
 import (
+	"context"
 	"encoding/json"
 	"testing"
 
+	"github.com/rs/zerolog"
 	stripe "github.com/stripe/stripe-go/v82"
 )
 
@@ -73,6 +75,34 @@ func TestUnmarshalPaymentIntent_Valid(t *testing.T) {
 	if pi.Amount != 1999 {
 		t.Errorf("Amount = %d, want 1999", pi.Amount)
 	}
+}
+
+func TestHandlePaymentIntentSucceeded_PreOrder_SkipsOrderUpdate(t *testing.T) {
+	pi := &stripe.PaymentIntent{
+		ID:       "pi_preorder_test",
+		Amount:   4999,
+		Currency: "eur",
+		Metadata: map[string]string{
+			"stoa_mode":              "pre_order",
+			"stoa_payment_method_id": "6ba7b810-9dad-11d1-80b4-00c04fd430c8",
+		},
+	}
+	// Should not panic or attempt DB access — db is nil.
+	handlePaymentIntentSucceeded(context.Background(), pi, nil, nil, zerolog.Nop())
+}
+
+func TestHandlePaymentIntentFailed_PreOrder_SkipsOrderUpdate(t *testing.T) {
+	pi := &stripe.PaymentIntent{
+		ID:       "pi_preorder_failed",
+		Amount:   4999,
+		Currency: "eur",
+		Metadata: map[string]string{
+			"stoa_mode":              "pre_order",
+			"stoa_payment_method_id": "6ba7b810-9dad-11d1-80b4-00c04fd430c8",
+		},
+	}
+	// Should not panic or attempt DB access — db is nil.
+	handlePaymentIntentFailed(context.Background(), pi, nil, nil, zerolog.Nop())
 }
 
 func TestUnmarshalPaymentIntent_InvalidJSON(t *testing.T) {

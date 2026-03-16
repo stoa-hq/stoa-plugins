@@ -108,6 +108,42 @@ func TestPaymentIntentHandler_Unauthenticated(t *testing.T) {
 	}
 }
 
+func TestPaymentIntentHandler_PreOrder_MissingAmount(t *testing.T) {
+	sc := &stripeClient{publishableKey: "pk_test", currency: "EUR"}
+	auth := testAuthHelper(uuid.MustParse("550e8400-e29b-41d4-a716-446655440000"))
+	h := paymentIntentHandler(sc, nil, auth, zerolog.Nop())
+
+	body, _ := json.Marshal(paymentIntentRequest{
+		PaymentMethodID: "6ba7b810-9dad-11d1-80b4-00c04fd430c8",
+		Currency:        "EUR",
+	})
+	req := httptest.NewRequest(http.MethodPost, "/", bytes.NewReader(body))
+	w := httptest.NewRecorder()
+	h(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("status = %d, want %d", w.Code, http.StatusBadRequest)
+	}
+}
+
+func TestPaymentIntentHandler_PreOrder_MissingCurrency(t *testing.T) {
+	sc := &stripeClient{publishableKey: "pk_test", currency: "EUR"}
+	auth := testAuthHelper(uuid.MustParse("550e8400-e29b-41d4-a716-446655440000"))
+	h := paymentIntentHandler(sc, nil, auth, zerolog.Nop())
+
+	body, _ := json.Marshal(paymentIntentRequest{
+		PaymentMethodID: "6ba7b810-9dad-11d1-80b4-00c04fd430c8",
+		Amount:          1999,
+	})
+	req := httptest.NewRequest(http.MethodPost, "/", bytes.NewReader(body))
+	w := httptest.NewRecorder()
+	h(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("status = %d, want %d", w.Code, http.StatusBadRequest)
+	}
+}
+
 func TestHealthHandler_ReturnsOK(t *testing.T) {
 	sc := &stripeClient{publishableKey: "pk_test_abc", currency: "EUR"}
 	h := healthHandler(sc, zerolog.Nop())
@@ -232,6 +268,45 @@ func TestMountRoutes_HealthRequiresAuth(t *testing.T) {
 
 	if w.Code != http.StatusUnauthorized {
 		t.Errorf("unauthenticated health check: status = %d, want %d", w.Code, http.StatusUnauthorized)
+	}
+}
+
+func TestExtractReceiptEmail_WithEmail(t *testing.T) {
+	raw := []byte(`{"first_name":"Max","email":"max@example.com","city":"Berlin"}`)
+	got := extractReceiptEmail(raw)
+	if got != "max@example.com" {
+		t.Errorf("extractReceiptEmail() = %q, want %q", got, "max@example.com")
+	}
+}
+
+func TestExtractReceiptEmail_NoEmail(t *testing.T) {
+	raw := []byte(`{"first_name":"Max","city":"Berlin"}`)
+	got := extractReceiptEmail(raw)
+	if got != "" {
+		t.Errorf("extractReceiptEmail() = %q, want empty", got)
+	}
+}
+
+func TestExtractReceiptEmail_Nil(t *testing.T) {
+	got := extractReceiptEmail(nil)
+	if got != "" {
+		t.Errorf("extractReceiptEmail(nil) = %q, want empty", got)
+	}
+}
+
+func TestExtractReceiptEmail_InvalidJSON(t *testing.T) {
+	raw := []byte(`not-json`)
+	got := extractReceiptEmail(raw)
+	if got != "" {
+		t.Errorf("extractReceiptEmail(invalid) = %q, want empty", got)
+	}
+}
+
+func TestExtractReceiptEmail_EmptyJSON(t *testing.T) {
+	raw := []byte(`{}`)
+	got := extractReceiptEmail(raw)
+	if got != "" {
+		t.Errorf("extractReceiptEmail({}) = %q, want empty", got)
 	}
 }
 

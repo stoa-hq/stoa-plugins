@@ -23,6 +23,14 @@ func handlePaymentIntentSucceeded(
 	hooks *sdk.HookRegistry,
 	logger zerolog.Logger,
 ) {
+	// Pre-order PIs don't have an order yet — skip order processing.
+	if pi.Metadata["stoa_mode"] == "pre_order" {
+		logger.Info().
+			Str("payment_intent_id", pi.ID).
+			Msg("stripe webhook: pre-order payment intent succeeded, no order update needed")
+		return
+	}
+
 	orderID, paymentMethodID, err := extractMetadata(pi)
 	if err != nil {
 		logger.Error().Err(err).Str("payment_intent_id", pi.ID).
@@ -78,6 +86,14 @@ func handlePaymentIntentFailed(
 	hooks *sdk.HookRegistry,
 	logger zerolog.Logger,
 ) {
+	// Pre-order PIs don't have an order yet — just log.
+	if pi.Metadata["stoa_mode"] == "pre_order" {
+		logger.Warn().
+			Str("payment_intent_id", pi.ID).
+			Msg("stripe webhook: pre-order payment intent failed")
+		return
+	}
+
 	orderID, paymentMethodID, err := extractMetadata(pi)
 	if err != nil {
 		logger.Error().Err(err).Str("payment_intent_id", pi.ID).
@@ -152,12 +168,14 @@ func createTransaction(
 ) (txID uuid.UUID, duplicate bool, err error) {
 	id := uuid.New()
 	var returnedID uuid.UUID
+	var returnedStatus string
 	err = db.QueryRow(ctx, `
 		INSERT INTO payment_transactions
 			(id, order_id, payment_method_id, status, amount, currency, provider_reference, created_at)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-		ON CONFLICT (provider_reference) DO NOTHING
-		RETURNING id`,
+		ON CONFLICT (provider_reference) WHERE provider_reference IS NOT NULL DO UPDATE
+			SET status = EXCLUDED.status
+		RETURNING id, status`,
 		id,
 		orderID,
 		paymentMethodID,
@@ -166,13 +184,14 @@ func createTransaction(
 		strings.ToUpper(string(pi.Currency)),
 		pi.ID,
 		time.Now().UTC(),
-	).Scan(&returnedID)
+	).Scan(&returnedID, &returnedStatus)
 	if err != nil {
-		// pgx returns no rows error when ON CONFLICT DO NOTHING fires
-		if err.Error() == "no rows in result set" {
-			return uuid.Nil, true, nil
-		}
 		return uuid.Nil, false, fmt.Errorf("insert payment_transaction: %w", err)
+	}
+	// If the returned status differs from what we tried to set,
+	// this is a duplicate webhook for an already-finalized transaction.
+	if returnedStatus != status {
+		return uuid.Nil, true, nil
 	}
 	return returnedID, false, nil
 }

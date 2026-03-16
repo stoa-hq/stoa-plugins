@@ -36,6 +36,12 @@ type PaymentIntentResult struct {
 	Currency       string `json:"currency"`
 }
 
+// OrderContext holds human-readable order data for enriching the Stripe PaymentIntent.
+type OrderContext struct {
+	OrderNumber  string
+	ReceiptEmail string
+}
+
 // CreatePaymentIntent creates a Stripe PaymentIntent for the given order.
 // The orderID and paymentMethodID are stored in the PaymentIntent metadata so
 // they can be recovered when Stripe fires the webhook event.
@@ -45,9 +51,18 @@ func (s *stripeClient) CreatePaymentIntent(
 	paymentMethodID uuid.UUID,
 	amount int64,
 	currency string,
+	oc OrderContext,
 ) (*PaymentIntentResult, error) {
 	if currency == "" {
 		currency = s.currency
+	}
+
+	metadata := map[string]string{
+		"stoa_order_id":          orderID.String(),
+		"stoa_payment_method_id": paymentMethodID.String(),
+	}
+	if oc.OrderNumber != "" {
+		metadata["stoa_order_number"] = oc.OrderNumber
 	}
 
 	params := &stripe.PaymentIntentParams{
@@ -56,10 +71,14 @@ func (s *stripeClient) CreatePaymentIntent(
 		AutomaticPaymentMethods: &stripe.PaymentIntentAutomaticPaymentMethodsParams{
 			Enabled: stripe.Bool(true),
 		},
-		Metadata: map[string]string{
-			"stoa_order_id":          orderID.String(),
-			"stoa_payment_method_id": paymentMethodID.String(),
-		},
+		Metadata: metadata,
+	}
+
+	if oc.OrderNumber != "" {
+		params.Description = stripe.String("Stoa Order " + oc.OrderNumber)
+	}
+	if oc.ReceiptEmail != "" {
+		params.ReceiptEmail = stripe.String(oc.ReceiptEmail)
 	}
 
 	pi, err := s.api.PaymentIntents.New(params)
@@ -74,4 +93,66 @@ func (s *stripeClient) CreatePaymentIntent(
 		Amount:         pi.Amount,
 		Currency:       string(pi.Currency),
 	}, nil
+}
+
+// RetrievePaymentIntent fetches a PaymentIntent from Stripe by its ID.
+func (s *stripeClient) RetrievePaymentIntent(_ context.Context, id string) (*stripe.PaymentIntent, error) {
+	pi, err := s.api.PaymentIntents.Get(id, nil)
+	if err != nil {
+		return nil, fmt.Errorf("stripe: retrieve payment intent %s: %w", id, err)
+	}
+	return pi, nil
+}
+
+// CreatePreOrderPaymentIntent creates a Stripe PaymentIntent before an order exists.
+// Unlike CreatePaymentIntent, it does not require an order ID.
+func (s *stripeClient) CreatePreOrderPaymentIntent(
+	_ context.Context,
+	paymentMethodID uuid.UUID,
+	amount int64,
+	currency string,
+) (*PaymentIntentResult, error) {
+	if currency == "" {
+		currency = s.currency
+	}
+
+	metadata := map[string]string{
+		"stoa_mode":              "pre_order",
+		"stoa_payment_method_id": paymentMethodID.String(),
+	}
+
+	params := &stripe.PaymentIntentParams{
+		Amount:   stripe.Int64(amount),
+		Currency: stripe.String(strings.ToLower(currency)),
+		AutomaticPaymentMethods: &stripe.PaymentIntentAutomaticPaymentMethodsParams{
+			Enabled: stripe.Bool(true),
+		},
+		Metadata: metadata,
+	}
+
+	pi, err := s.api.PaymentIntents.New(params)
+	if err != nil {
+		return nil, fmt.Errorf("stripe: create pre-order payment intent: %w", err)
+	}
+
+	return &PaymentIntentResult{
+		ID:             pi.ID,
+		ClientSecret:   pi.ClientSecret,
+		PublishableKey: s.publishableKey,
+		Amount:         pi.Amount,
+		Currency:       string(pi.Currency),
+	}, nil
+}
+
+// DashboardURL returns the Stripe Dashboard URL for a PaymentIntent.
+// It uses the publishable key prefix to determine test vs. live mode.
+func (s *stripeClient) DashboardURL(paymentIntentID string) string {
+	if paymentIntentID == "" {
+		return ""
+	}
+	prefix := "https://dashboard.stripe.com"
+	if strings.HasPrefix(s.publishableKey, "pk_test_") {
+		prefix += "/test"
+	}
+	return prefix + "/payments/" + paymentIntentID
 }

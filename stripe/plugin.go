@@ -38,7 +38,7 @@ import (
 
 const (
 	pluginName    = "stripe"
-	pluginVersion = "0.2.1"
+	pluginVersion = "0.2.2"
 )
 
 // Plugin integrates Stripe as a payment provider for Stoa.
@@ -69,6 +69,11 @@ func (p *Plugin) Init(app *sdk.AppContext) error {
 	p.sc = newStripeClient(cfg)
 
 	mountRoutes(app.Router, p.sc, app.DB, app.Hooks, app.Auth, cfg.WebhookSecret, p.logger)
+
+	// Register checkout hooks:
+	// - before: verifies Stripe PaymentIntent status
+	// - after: creates transaction + confirms order for pay-first flow
+	registerCheckoutHooks(app.Hooks, p.sc, app.DB, p.logger)
 
 	// Serve embedded frontend assets at /plugins/stripe/assets/*
 	if app.AssetRouter != nil {
