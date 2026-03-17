@@ -191,6 +191,7 @@ func TestCreatePaymentIntent_CustomerIDInMetadata(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		bodyBytes, _ := io.ReadAll(r.Body)
 		body = string(bodyBytes)
+		t.Logf("Request body: %s", body)
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte(`{"id":"pi_test","object":"payment_intent","amount":1999,"currency":"eur","client_secret":"pi_test_secret","status":"requires_payment_method"}`))
@@ -214,7 +215,7 @@ func TestCreatePaymentIntent_CustomerIDInMetadata(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if !strings.Contains(body, "stoa_customer_id") {
-		t.Error("expected stoa_customer_id in request body")
+		t.Errorf("expected stoa_customer_id in request body, got: %s", body)
 	}
 	if strings.Contains(body, "stoa_guest_token") {
 		t.Error("stoa_guest_token should not be present when empty")
@@ -287,5 +288,48 @@ func TestCreatePaymentIntent_ReceiptEmailInRequest(t *testing.T) {
 	}
 	if !strings.Contains(body, "receipt") {
 		t.Error("expected receipt email data in request body")
+	}
+}
+
+func TestUpdatePaymentIntentMetadata_Success(t *testing.T) {
+	var body string
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		bodyBytes, _ := io.ReadAll(r.Body)
+		body = string(bodyBytes)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"id":"pi_test","object":"payment_intent","amount":1999,"currency":"eur","status":"requires_capture"}`))
+	}))
+	t.Cleanup(ts.Close)
+	sc := newTestStripeClientFromServer(t, ts)
+
+	meta := map[string]string{
+		"stoa_order_id":     "11111111-1111-1111-1111-111111111111",
+		"stoa_order_number": "ORD-100",
+		"stoa_customer_id":  "22222222-2222-2222-2222-222222222222",
+	}
+
+	err := sc.UpdatePaymentIntentMetadata(context.Background(), "pi_test", meta)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(body, "stoa_order_id") {
+		t.Error("expected stoa_order_id in request body")
+	}
+	if !strings.Contains(body, "stoa_order_number") {
+		t.Error("expected stoa_order_number in request body")
+	}
+	if !strings.Contains(body, "stoa_customer_id") {
+		t.Error("expected stoa_customer_id in request body")
+	}
+}
+
+func TestUpdatePaymentIntentMetadata_APIError(t *testing.T) {
+	_, sc := newTestStripeClient(t, http.StatusBadRequest,
+		`{"error":{"type":"invalid_request_error","message":"No such payment_intent"}}`)
+
+	err := sc.UpdatePaymentIntentMetadata(context.Background(), "pi_notfound", map[string]string{"key": "val"})
+	if err == nil {
+		t.Error("expected error for API failure, got nil")
 	}
 }

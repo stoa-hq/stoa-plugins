@@ -119,6 +119,7 @@ func paymentIntentHandler(sc *stripeClient, db *pgxpool.Pool, authHelper *sdk.Au
 			status         string
 			orderNumber    string
 			billingAddress []byte
+			guestToken     *string
 		)
 
 		// Authenticated users: ownership check via customer_id.
@@ -128,20 +129,25 @@ func paymentIntentHandler(sc *stripeClient, db *pgxpool.Pool, authHelper *sdk.Au
 		if userID != uuid.Nil {
 			query = `SELECT total, currency, status, order_number, billing_address FROM orders WHERE id = $1 AND customer_id = $2`
 			args = []interface{}{orderID, userID}
+			if err := db.QueryRow(r.Context(), query, args...).Scan(&total, &currency, &status, &orderNumber, &billingAddress); err != nil {
+				logger.Error().Err(err).Str("order_id", orderID.String()).Msg("stripe: fetch order")
+				writeError(w, http.StatusNotFound, "order not found")
+				return
+			}
 		} else {
 			if req.GuestToken == "" {
 				writeError(w, http.StatusUnauthorized, "authentication or guest token required")
 				return
 			}
-			query = `SELECT total, currency, status, order_number, billing_address FROM orders WHERE id = $1 AND guest_token = $2 AND customer_id IS NULL`
+			query = `SELECT total, currency, status, order_number, billing_address, guest_token FROM orders WHERE id = $1 AND guest_token = $2 AND customer_id IS NULL`
 			args = []interface{}{orderID, req.GuestToken}
+			if err := db.QueryRow(r.Context(), query, args...).Scan(&total, &currency, &status, &orderNumber, &billingAddress, &guestToken); err != nil {
+				logger.Error().Err(err).Str("order_id", orderID.String()).Msg("stripe: fetch order")
+				writeError(w, http.StatusNotFound, "order not found")
+				return
+			}
 		}
 
-		if err := db.QueryRow(r.Context(), query, args...).Scan(&total, &currency, &status, &orderNumber, &billingAddress); err != nil {
-			logger.Error().Err(err).Str("order_id", orderID.String()).Msg("stripe: fetch order")
-			writeError(w, http.StatusNotFound, "order not found")
-			return
-		}
 		if status != "pending" {
 			writeError(w, http.StatusUnprocessableEntity,
 				"payment intent can only be created for pending orders")
@@ -152,11 +158,16 @@ func paymentIntentHandler(sc *stripeClient, db *pgxpool.Pool, authHelper *sdk.Au
 			return
 		}
 
+		guestTokenValue := ""
+		if guestToken != nil {
+			guestTokenValue = *guestToken
+		}
+
 		oc := OrderContext{
 			OrderNumber:  orderNumber,
 			ReceiptEmail: extractReceiptEmail(billingAddress),
 			CustomerID:   userID,
-			GuestToken:   req.GuestToken,
+			GuestToken:   guestTokenValue,
 		}
 
 		result, err := sc.CreatePaymentIntent(r.Context(), orderID, paymentMethodID, total, currency, oc)
@@ -293,6 +304,30 @@ func insertPendingTransaction(
 	)
 	if err != nil {
 		return fmt.Errorf("insert pending transaction: %w", err)
+	}
+	return nil
+}
+
+// insertCancelledTransaction creates a "cancelled" payment_transaction so the
+// Admin Panel can display the Stripe transaction link for verification even when
+// the checkout failed (e.g. insufficient stock).
+func insertCancelledTransaction(
+	ctx context.Context,
+	db *pgxpool.Pool,
+	orderID, paymentMethodID uuid.UUID,
+	providerRef string,
+	amount int64,
+	currency string,
+) error {
+	_, err := db.Exec(ctx, `
+		INSERT INTO payment_transactions
+			(id, order_id, payment_method_id, status, amount, currency, provider_reference, created_at)
+		VALUES ($1, $2, $3, 'cancelled', $4, $5, $6, NOW())
+		ON CONFLICT (provider_reference) WHERE provider_reference IS NOT NULL DO NOTHING`,
+		uuid.New(), orderID, paymentMethodID, amount, strings.ToUpper(currency), providerRef,
+	)
+	if err != nil {
+		return fmt.Errorf("insert cancelled transaction: %w", err)
 	}
 	return nil
 }

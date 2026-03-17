@@ -137,6 +137,12 @@
           currency: this._context.currency || 'EUR',
           payment_method_id: this._context.paymentMethodId
         };
+        if (this._context.email) {
+          body.email = this._context.email;
+        }
+        if (this._context.guestToken) {
+          body.guest_token = this._context.guestToken;
+        }
       }
       var data = await this._apiClient.post('/store/stripe/payment-intent', body);
 
@@ -194,11 +200,33 @@
         btn.appendChild(document.createTextNode('Wird verarbeitet\u2026'));
         errorEl.style.display = 'none';
 
+        var confirmParams = {
+            return_url: window.location.origin + '/checkout/success?order=' + encodeURIComponent(self._context.orderNumber || '')
+        };
+
+        // Pass billing details and receipt email to Stripe during authorization.
+        var bd = self._context.billingDetails;
+        if (bd) {
+          confirmParams.payment_method_data = {
+            billing_details: {
+              name: [bd.first_name, bd.last_name].filter(Boolean).join(' ') || undefined,
+              email: bd.email || self._context.email || undefined,
+              address: {
+                line1: bd.street || undefined,
+                city: bd.city || undefined,
+                postal_code: bd.zip || undefined,
+                country: bd.country_code || undefined
+              }
+            }
+          };
+        }
+        if (self._context.email || (bd && bd.email)) {
+          confirmParams.receipt_email = (bd && bd.email) || self._context.email;
+        }
+
         var result = await stripe.confirmPayment({
           elements: elements,
-          confirmParams: {
-            return_url: window.location.origin + '/checkout/success?order=' + encodeURIComponent(self._context.orderNumber || '')
-          },
+          confirmParams: confirmParams,
           redirect: 'if_required'
         });
 

@@ -101,7 +101,7 @@ func TestHandleFailedCheckoutPayment_NonStripeProvider(t *testing.T) {
 		},
 	}
 	// sc is nil — any API call would panic; expect early return without panic.
-	handleFailedCheckoutPayment(context.Background(), event, nil, zerolog.Nop())
+	handleFailedCheckoutPayment(context.Background(), event, nil, nil, zerolog.Nop())
 }
 
 func TestHandleFailedCheckoutPayment_EmptyPaymentReference(t *testing.T) {
@@ -112,7 +112,7 @@ func TestHandleFailedCheckoutPayment_EmptyPaymentReference(t *testing.T) {
 		},
 	}
 	// sc is nil — any API call would panic; expect early return without panic.
-	handleFailedCheckoutPayment(context.Background(), event, nil, zerolog.Nop())
+	handleFailedCheckoutPayment(context.Background(), event, nil, nil, zerolog.Nop())
 }
 
 func TestHandleFailedCheckoutPayment_APIError_LogsAndDoesNotPanic(t *testing.T) {
@@ -126,7 +126,7 @@ func TestHandleFailedCheckoutPayment_APIError_LogsAndDoesNotPanic(t *testing.T) 
 		},
 	}
 	// Should log error but not panic.
-	handleFailedCheckoutPayment(context.Background(), event, sc, zerolog.Nop())
+	handleFailedCheckoutPayment(context.Background(), event, sc, nil, zerolog.Nop())
 }
 
 func TestHandleFailedCheckoutPayment_Success_CallsCancelAPI(t *testing.T) {
@@ -146,7 +146,7 @@ func TestHandleFailedCheckoutPayment_Success_CallsCancelAPI(t *testing.T) {
 			"payment_reference": "pi_test123",
 		},
 	}
-	handleFailedCheckoutPayment(context.Background(), event, sc, zerolog.Nop())
+	handleFailedCheckoutPayment(context.Background(), event, sc, nil, zerolog.Nop())
 
 	if !called {
 		t.Error("expected Stripe PaymentIntents Cancel API to be called")

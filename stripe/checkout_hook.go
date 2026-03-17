@@ -25,7 +25,7 @@ func registerCheckoutHooks(hooks *sdk.HookRegistry, sc *stripeClient, db *pgxpoo
 		return nil // after-hooks must not fail the checkout
 	})
 	hooks.On(sdk.HookAfterCheckoutFailed, func(ctx context.Context, event *sdk.HookEvent) error {
-		handleFailedCheckoutPayment(ctx, event, sc, logger)
+		handleFailedCheckoutPayment(ctx, event, sc, db, logger)
 		return nil // nicht-fatal
 	})
 	hooks.On(sdk.HookAfterOrderUpdate, func(ctx context.Context, event *sdk.HookEvent) error {
@@ -39,7 +39,9 @@ func registerCheckoutHooks(hooks *sdk.HookRegistry, sc *stripeClient, db *pgxpoo
 
 // handleFailedCheckoutPayment cancels the Stripe PaymentIntent when checkout fails
 // (e.g. insufficient stock). Since capture_method=manual, no money was moved.
-func handleFailedCheckoutPayment(ctx context.Context, event *sdk.HookEvent, sc *stripeClient, logger zerolog.Logger) {
+// It also creates a "cancelled" payment transaction so the Admin Panel shows the
+// link to the Stripe transaction for manual verification.
+func handleFailedCheckoutPayment(ctx context.Context, event *sdk.HookEvent, sc *stripeClient, db *pgxpool.Pool, logger zerolog.Logger) {
 	provider, _ := event.Metadata["provider"].(string)
 	if provider != "stripe" {
 		return
@@ -48,11 +50,46 @@ func handleFailedCheckoutPayment(ctx context.Context, event *sdk.HookEvent, sc *
 	if ref == "" {
 		return
 	}
+
+	// Retrieve the PI before cancellation to get amount/currency.
+	pi, err := sc.RetrievePaymentIntent(ctx, ref)
+	if err != nil {
+		logger.Error().Err(err).Str("payment_intent_id", ref).Msg("stripe: failed to retrieve payment intent before cancellation")
+	}
+
 	if err := sc.CancelPaymentIntent(ctx, ref); err != nil {
 		logger.Error().Err(err).Str("payment_intent_id", ref).Msg("stripe: failed to cancel payment intent after checkout failure")
 		return
 	}
 	logger.Info().Str("payment_intent_id", ref).Msg("stripe: payment intent cancelled after checkout failure")
+
+	// Insert a "cancelled" transaction so the Admin Panel has a link to the
+	// Stripe transaction for verification.
+	if db != nil {
+		var orderID, paymentMethodID uuid.UUID
+		qErr := db.QueryRow(ctx,
+			`SELECT id, payment_method_id FROM orders WHERE payment_reference = $1`, ref,
+		).Scan(&orderID, &paymentMethodID)
+		if qErr != nil {
+			logger.Error().Err(qErr).Str("payment_reference", ref).
+				Msg("stripe: after_checkout_failed: could not find order for cancelled transaction")
+			return
+		}
+
+		var amount int64
+		var currency string
+		if pi != nil {
+			amount = pi.Amount
+			currency = string(pi.Currency)
+		}
+
+		if txErr := insertCancelledTransaction(ctx, db, orderID, paymentMethodID, ref, amount, currency); txErr != nil {
+			logger.Error().Err(txErr).
+				Str("order_id", orderID.String()).
+				Str("payment_intent_id", ref).
+				Msg("stripe: after_checkout_failed: failed to insert cancelled transaction")
+		}
+	}
 }
 
 // validateCheckoutPayment checks that a Stripe PaymentIntent has been authorized
@@ -108,16 +145,39 @@ func finalizePreOrderPayment(ctx context.Context, event *sdk.HookEvent, sc *stri
 		return
 	}
 
-	// Look up the order by payment_reference to get its ID and payment_method_id.
+	// Look up the order by payment_reference to get its ID, payment_method_id,
+	// customer_id, guest_token, and order_number.
 	var orderID, paymentMethodID uuid.UUID
+	var customerID *uuid.UUID
+	var guestTokenVal *string
+	var orderNumberVal string
 	err = db.QueryRow(ctx,
-		`SELECT id, payment_method_id FROM orders WHERE payment_reference = $1`,
+		`SELECT id, payment_method_id, customer_id, guest_token, order_number FROM orders WHERE payment_reference = $1`,
 		ref,
-	).Scan(&orderID, &paymentMethodID)
+	).Scan(&orderID, &paymentMethodID, &customerID, &guestTokenVal, &orderNumberVal)
 	if err != nil {
 		logger.Error().Err(err).Str("payment_reference", ref).
 			Msg("stripe: after_checkout: failed to find order by payment_reference")
 		return
+	}
+
+	// Enrich PaymentIntent metadata with order data (order was created after PI).
+	captureMeta := map[string]string{
+		"stoa_order_id":     orderID.String(),
+		"stoa_order_number": orderNumberVal,
+	}
+	if customerID != nil {
+		captureMeta["stoa_customer_id"] = customerID.String()
+	}
+	if guestTokenVal != nil && *guestTokenVal != "" {
+		captureMeta["stoa_guest_token"] = *guestTokenVal
+	}
+	if err := sc.UpdatePaymentIntentMetadata(ctx, ref, captureMeta); err != nil {
+		logger.Error().Err(err).
+			Str("order_id", orderID.String()).
+			Str("payment_intent_id", ref).
+			Msg("stripe: after_checkout: failed to update payment intent metadata")
+		// Non-fatal: continue with capture even if metadata update fails.
 	}
 
 	// Capture immediately when CaptureOn == "confirmed".
@@ -177,6 +237,37 @@ func captureOnStatusChange(ctx context.Context, event *sdk.HookEvent, sc *stripe
 	ref, _ := event.Changes["payment_reference"].(string)
 	if ref == "" {
 		return
+	}
+
+	// Enrich PaymentIntent metadata with order data before capture.
+	if db != nil {
+		var orderID uuid.UUID
+		var customerID *uuid.UUID
+		var guestTokenVal *string
+		var orderNumberVal string
+		qErr := db.QueryRow(ctx,
+			`SELECT id, customer_id, guest_token, order_number FROM orders WHERE payment_reference = $1`,
+			ref,
+		).Scan(&orderID, &customerID, &guestTokenVal, &orderNumberVal)
+		if qErr == nil {
+			captureMeta := map[string]string{
+				"stoa_order_id":     orderID.String(),
+				"stoa_order_number": orderNumberVal,
+			}
+			if customerID != nil {
+				captureMeta["stoa_customer_id"] = customerID.String()
+			}
+			if guestTokenVal != nil && *guestTokenVal != "" {
+				captureMeta["stoa_guest_token"] = *guestTokenVal
+			}
+			if uErr := sc.UpdatePaymentIntentMetadata(ctx, ref, captureMeta); uErr != nil {
+				logger.Error().Err(uErr).Str("payment_intent_id", ref).
+					Msg("stripe: failed to update payment intent metadata before capture")
+			}
+		} else {
+			logger.Error().Err(qErr).Str("payment_reference", ref).
+				Msg("stripe: failed to find order for metadata enrichment before capture")
+		}
 	}
 
 	if err := sc.CapturePaymentIntent(ctx, ref); err != nil {

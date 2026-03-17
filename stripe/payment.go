@@ -177,6 +177,19 @@ func (s *stripeClient) RefundPaymentIntent(_ context.Context, paymentIntentID st
 	return nil
 }
 
+// UpdatePaymentIntentMetadata updates the metadata on an existing PaymentIntent.
+// This is used to enrich pre-order PaymentIntents with order data before capture.
+func (s *stripeClient) UpdatePaymentIntentMetadata(_ context.Context, paymentIntentID string, metadata map[string]string) error {
+	params := &stripe.PaymentIntentParams{
+		Metadata: metadata,
+	}
+	_, err := s.api.PaymentIntents.Update(paymentIntentID, params)
+	if err != nil {
+		return fmt.Errorf("stripe: update payment intent metadata %s: %w", paymentIntentID, err)
+	}
+	return nil
+}
+
 // CapturePaymentIntent captures an authorized PaymentIntent.
 func (s *stripeClient) CapturePaymentIntent(_ context.Context, paymentIntentID string) error {
 	_, err := s.api.PaymentIntents.Capture(paymentIntentID, nil)
