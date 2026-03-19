@@ -8,8 +8,9 @@ Each plugin is an independent Go module. Install only what you need.
 
 | Plugin | Description | Version |
 |--------|-------------|---------|
-| [`n8n`](./n8n) | Workflow automation & cronjobs via n8n | `v0.1.2` |
-| [`stripe`](./stripe)| stripe payment method | `v0.1.1` |
+| [`n8n`](./n8n) | Workflow automation & cronjobs via n8n | `v0.4.0` |
+| [`stripe`](./stripe)| stripe payment method | `v0.4.0` |
+| [`meilisearch`](./meilisearch) | Typo-tolerant search via Meilisearch | `v0.1.0` |
 
 ## Installation
 
@@ -37,6 +38,14 @@ stoa-plugins/
 │   ├── go.mod
 │   ├── plugin.go
 │   └── ...
+├── meilisearch/     # Meilisearch search engine
+│   ├── go.mod
+│   ├── plugin.go
+│   └── ...
+├── stripe/          # Stripe payment method
+│   ├── go.mod
+│   ├── plugin.go
+│   └── ...
 └── shared/          # Shared utilities (planned)
 ```
 
@@ -46,7 +55,7 @@ Each plugin is an independent Go module with its own `go.mod`, versioned via sub
 
 ```bash
 go work init
-go work use ./n8n
+go work use ./n8n ./meilisearch ./stripe
 ```
 
 ## Contributing

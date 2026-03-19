@@ -8,7 +8,7 @@ require (
 	github.com/jackc/pgx/v5 v5.8.0
 	github.com/mark3labs/mcp-go v0.44.1
 	github.com/rs/zerolog v1.34.0
-	github.com/stoa-hq/stoa v0.3.1
+	github.com/stoa-hq/stoa v0.5.0
 	github.com/stripe/stripe-go/v82 v82.0.0
 )
 
