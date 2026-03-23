@@ -1,0 +1,183 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>Complete Payment</title>
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+body{font-family:system-ui,-apple-system,sans-serif;background:#f5f2ee;min-height:100dvh;display:flex;align-items:center;justify-content:center;padding:2rem 1rem}
+.wrap{width:100%;max-width:460px;display:flex;flex-direction:column;align-items:center;gap:1.25rem}
+.hdr{font-size:.75rem;color:#8a7a6a;letter-spacing:.06em;text-transform:uppercase}
+.card{width:100%;background:#fffdf9;border-radius:18px;padding:2.25rem 2rem;box-shadow:0 1px 0 0 rgba(212,168,67,.15),0 4px 6px -1px rgba(42,33,24,.06),0 20px 60px -8px rgba(42,33,24,.10);border:1px solid rgba(212,168,67,.20);position:relative;overflow:hidden}
+.card::before{content:'';position:absolute;inset:0;border-radius:inherit;background:linear-gradient(135deg,rgba(212,168,67,.06) 0%,transparent 50%);pointer-events:none}
+.amount-section{text-align:center;padding-bottom:.25rem;position:relative}
+.eyebrow{font-size:.6875rem;font-weight:500;letter-spacing:.1em;text-transform:uppercase;color:#8a7a6a;margin-bottom:.5rem}
+.figure{font-size:clamp(2rem,8vw,2.75rem);color:#2a2118;font-weight:700;letter-spacing:-.03em;line-height:1;margin-bottom:.375rem}
+.email{font-size:.8125rem;color:#8a7a6a;font-weight:300}
+.divider{display:flex;align-items:center;gap:.5rem;margin:1.25rem 0}
+.divider span:first-child,.divider span:last-child{width:4px;height:4px;border-radius:50%;background:rgba(212,168,67,.5);flex-shrink:0}
+.divider span:nth-child(2){flex:1;height:1px;background:linear-gradient(to right,rgba(212,168,67,.15),rgba(212,168,67,.4),rgba(212,168,67,.15))}
+#stripe-mount{min-height:80px}
+.msg{display:flex;flex-direction:column;align-items:center;gap:1rem;padding:1.5rem 0;text-align:center}
+.msg h2{font-size:1.375rem;color:#2a2118;font-weight:700;letter-spacing:-.02em}
+.msg p{font-size:.875rem;color:#6b6055;font-weight:300;line-height:1.6;max-width:32ch}
+.msg--ok h2{color:#16a34a}
+.msg--err h2{color:#d97706}
+.spinner{width:36px;height:36px;border:2.5px solid transparent;border-top-color:#d4a843;border-radius:50%;animation:spin 1s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+.ftr{font-size:.6875rem;color:#a89888;display:flex;align-items:center;gap:.5rem;letter-spacing:.03em}
+.ftr svg{color:#a89888}
+.hidden{display:none!important}
+#stripe-error{color:#dc2626;font-size:.875rem;margin-top:.5rem;display:none}
+#stripe-error.stripe-err--visible{display:block}
+.dot{color:#c8b8a8}
+.pay-btn{display:flex;align-items:center;justify-content:center;width:100%;margin-top:1rem;padding:.75rem 1.5rem;font-size:.9375rem;font-weight:600;color:#fff;background:#635bff;border:none;border-radius:.5rem;cursor:pointer;transition:background .15s}
+.pay-btn:hover{background:#4f46e5}
+.pay-btn--loading{opacity:0.6;pointer-events:none}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="hdr">Secure Payment</div>
+  <div class="card">
+    <!-- Loading -->
+    <div id="v-loading" class="msg">
+      <div class="spinner"></div>
+      <p>Preparing your payment&hellip;</p>
+    </div>
+    <!-- Payment form -->
+    <div id="v-form" class="hidden">
+      <div class="amount-section">
+        <div class="eyebrow">Amount due</div>
+        <div class="figure" id="amount-display"></div>
+        <div class="email" id="email-display"></div>
+      </div>
+      <div class="divider"><span></span><span></span><span></span></div>
+      <div id="stripe-mount"></div>
+      <div id="stripe-error"></div>
+    </div>
+    <!-- Confirming -->
+    <div id="v-confirming" class="msg hidden">
+      <div class="spinner"></div>
+      <p>Confirming your payment&hellip;</p>
+    </div>
+    <!-- Success -->
+    <div id="v-success" class="msg msg--ok hidden">
+      <svg viewBox="0 0 48 48" width="52" height="52" fill="none"><circle cx="24" cy="24" r="24" fill="#22c55e"/><path d="M14 24l7 7 13-13" stroke="#fff" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      <h2>Payment confirmed</h2>
+      <p>Redirecting to your order summary&hellip;</p>
+    </div>
+    <!-- Error -->
+    <div id="v-error" class="msg msg--err hidden">
+      <svg viewBox="0 0 48 48" width="48" height="48" fill="none"><circle cx="24" cy="24" r="22" stroke="currentColor" stroke-width="2"/><path d="M24 16v12M24 32v2" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"/></svg>
+      <h2 id="error-title">Something went wrong</h2>
+      <p id="error-body"></p>
+    </div>
+  </div>
+  <div class="ftr">
+    <svg viewBox="0 0 16 16" width="13" height="13" fill="none"><rect x="2" y="7" width="12" height="8" rx="2" stroke="currentColor" stroke-width="1.25"/><path d="M5 7V5a3 3 0 016 0v2" stroke="currentColor" stroke-width="1.25" stroke-linecap="round"/></svg>
+    <span>Secured by Stripe</span>
+    <span class="dot">&middot;</span>
+    <span>256-bit TLS encryption</span>
+  </div>
+</div>
+
+<script>
+(function(){
+  var TOKEN = location.pathname.split('/').pop();
+  var API = '/api/v1/store/stripe';
+
+  function csrfToken(){return(document.cookie.match(/(?:^|; )csrf_token=([^;]*)/)||[])[1]||''}
+
+  var views = {loading:'v-loading',form:'v-form',confirming:'v-confirming',success:'v-success',error:'v-error'};
+  function show(id){Object.values(views).forEach(function(v){document.getElementById(v).classList.toggle('hidden',v!==id)})}
+
+  function fmtAmount(cents,currency){
+    return new Intl.NumberFormat('de-DE',{style:'currency',currency:currency.toUpperCase()}).format(cents/100);
+  }
+
+  function showError(title,body){
+    document.getElementById('error-title').textContent=title;
+    document.getElementById('error-body').textContent=body;
+    show(views.error);
+  }
+
+  fetch(API+'/payment-link/'+TOKEN).then(function(res){
+    if(res.status===404){showError('Link not found','This payment link does not exist. Please check the URL or request a new link.');return null}
+    if(res.status===410){showError('Link expired','This payment link has already been used or has expired.');return null}
+    if(!res.ok){showError('Error','Unexpected error (HTTP '+res.status+').');return null}
+    return res.json();
+  }).then(function(json){
+    if(!json)return;
+    var d=json.data;
+    document.getElementById('amount-display').textContent=fmtAmount(d.amount,d.currency);
+    if(d.email)document.getElementById('email-display').textContent=d.email;
+    show(views.form);
+    initStripe(d);
+  }).catch(function(){
+    showError('Connection error','Could not reach the server. Please check your connection.');
+  });
+
+  function initStripe(d){
+    var s=document.createElement('script');
+    s.src='https://js.stripe.com/v3/';
+    s.onload=function(){
+      var stripe=Stripe(d.publishable_key);
+      var elements=stripe.elements({clientSecret:d.client_secret,appearance:{theme:'stripe',variables:{colorPrimary:'#635bff',borderRadius:'6px',fontFamily:'system-ui,-apple-system,sans-serif'}}});
+      var pe=elements.create('payment');
+      pe.mount('#stripe-mount');
+
+      pe.on('ready',function(){
+        var btn=document.createElement('button');
+        btn.textContent='Pay now';
+        btn.className='pay-btn';
+        document.getElementById('stripe-mount').parentNode.appendChild(btn);
+
+        btn.addEventListener('click',function(){
+          btn.disabled=true;
+          btn.textContent='Processing\u2026';
+          btn.classList.add('pay-btn--loading');
+          document.getElementById('stripe-error').classList.remove('stripe-err--visible');
+
+          stripe.confirmPayment({elements:elements,confirmParams:{return_url:location.origin+'/checkout/success'},redirect:'if_required'}).then(function(result){
+            if(result.error){
+              document.getElementById('stripe-error').textContent=result.error.message;
+              document.getElementById('stripe-error').classList.add('stripe-err--visible');
+              btn.disabled=false;
+              btn.textContent='Pay now';
+              btn.classList.remove('pay-btn--loading');
+            } else {
+              var piId=result.paymentIntent?result.paymentIntent.id:null;
+              if(piId)completeLink(piId);
+              else showError('Error','Payment succeeded but no intent ID returned.');
+            }
+          });
+        });
+      });
+    };
+    s.onerror=function(){showError('Loading error','Could not load payment form. Please try again.')};
+    document.head.appendChild(s);
+  }
+
+  function completeLink(piId){
+    show(views.confirming);
+    fetch(API+'/payment-link/'+TOKEN+'/complete',{
+      method:'POST',
+      headers:{'Content-Type':'application/json','X-CSRF-Token':csrfToken()},
+      body:JSON.stringify({payment_intent_id:piId})
+    }).then(function(res){
+      if(!res.ok)throw new Error('HTTP '+res.status);
+      return res.json();
+    }).then(function(json){
+      show(views.success);
+      var orderId=json.data&&json.data.order_id;
+      setTimeout(function(){location.href=orderId?'/checkout/success?order='+orderId:'/'},1800);
+    }).catch(function(){
+      showError('Confirmation error','Payment was processed but order confirmation failed. Please contact the store.');
+    });
+  }
+})();
+</script>
+</body>
+</html>

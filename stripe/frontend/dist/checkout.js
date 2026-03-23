@@ -120,31 +120,40 @@
     }
 
     async _initPayment(container) {
-      var body;
-      if (this._context.orderId) {
-        // Post-order mode: create PI for an existing order.
-        body = {
-          order_id: this._context.orderId,
-          payment_method_id: this._context.paymentMethodId
+      var data;
+      if (this._context.clientSecret && this._context.publishableKey) {
+        // Payment link mode: PI already exists, skip creation.
+        data = {
+          client_secret: this._context.clientSecret,
+          publishable_key: this._context.publishableKey
         };
-        if (this._context.guestToken) {
-          body.guest_token = this._context.guestToken;
-        }
       } else {
-        // Pre-order mode: create PI with amount and currency.
-        body = {
-          amount: this._context.amount,
-          currency: this._context.currency || 'EUR',
-          payment_method_id: this._context.paymentMethodId
-        };
-        if (this._context.email) {
-          body.email = this._context.email;
+        var body;
+        if (this._context.orderId) {
+          // Post-order mode: create PI for an existing order.
+          body = {
+            order_id: this._context.orderId,
+            payment_method_id: this._context.paymentMethodId
+          };
+          if (this._context.guestToken) {
+            body.guest_token = this._context.guestToken;
+          }
+        } else {
+          // Pre-order mode: create PI with amount and currency.
+          body = {
+            amount: this._context.amount,
+            currency: this._context.currency || 'EUR',
+            payment_method_id: this._context.paymentMethodId
+          };
+          if (this._context.email) {
+            body.email = this._context.email;
+          }
+          if (this._context.guestToken) {
+            body.guest_token = this._context.guestToken;
+          }
         }
-        if (this._context.guestToken) {
-          body.guest_token = this._context.guestToken;
-        }
+        data = await this._apiClient.post('/store/stripe/payment-intent', body);
       }
-      var data = await this._apiClient.post('/store/stripe/payment-intent', body);
 
       if (!data || !data.client_secret) {
         throw new Error('Invalid payment intent response');

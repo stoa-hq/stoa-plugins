@@ -30,6 +30,7 @@
 package stripe
 
 import (
+	"context"
 	"net/http"
 
 	"github.com/rs/zerolog"
@@ -44,6 +45,7 @@ const (
 // Plugin integrates Stripe as a payment provider for Stoa.
 type Plugin struct {
 	sc     *stripeClient
+	cfg    Config
 	logger zerolog.Logger
 }
 
@@ -67,8 +69,13 @@ func (p *Plugin) Init(app *sdk.AppContext) error {
 	}
 
 	p.sc = newStripeClient(cfg)
+	p.cfg = cfg
 
-	mountRoutes(app.Router, p.sc, app.DB, app.Hooks, app.Auth, cfg.WebhookSecret, p.logger)
+	if err := ensurePaymentLinksTable(context.Background(), app.DB); err != nil {
+		return err
+	}
+
+	mountRoutes(app.Router, p.sc, app.DB, app.Hooks, app.Auth, app.CheckoutFn, app.SecureCookie, cfg, p.logger)
 
 	// Register checkout hooks:
 	// - before: verifies Stripe PaymentIntent is authorized
